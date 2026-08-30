@@ -79,28 +79,7 @@
 
   <section class="card">
     <h2>省 token</h2>
-    <p class="lead">默认已经按「长播客」调好：整句合并后再翻，只翻你看到的部分，看过的存缓存。</p>
-
-    <div class="grid2">
-      <div class="field">
-        <label for="batchLines">每批句数 <span class="v" id="batchLinesV"></span></label>
-        <input id="batchLines" type="range" min="5" max="30" step="1">
-        <p class="note">越大越省（提示词摊薄），但出错时重来的成本更高。</p>
-      </div>
-      <div class="field">
-        <label for="batchChars">每批字符上限 <span class="v" id="batchCharsV"></span></label>
-        <input id="batchChars" type="range" min="400" max="3000" step="100">
-      </div>
-      <div class="field">
-        <label for="lookahead">预翻译句数 <span class="v" id="lookaheadV"></span></label>
-        <input id="lookahead" type="range" min="10" max="200" step="5">
-        <p class="note">只翻播放头之后这么多句。三小时的播客你只看了二十分钟，就只花二十分钟的钱。</p>
-      </div>
-      <div class="field">
-        <label for="concurrency">并发请求 <span class="v" id="concurrencyV"></span></label>
-        <input id="concurrency" type="range" min="1" max="5" step="1">
-      </div>
-    </div>
+    <p class="lead">分批、预翻译范围和并发都已经按「长播客」调好，不再单独暴露：整句合并后再翻，只翻播放头之后的部分，看过的存缓存。</p>
 
     <label class="check"><input type="checkbox" id="useContext"><span>带上一句原文做上下文<em>（连贯性更好，每批多约 30 token）</em></span></label>
     <label class="check"><input type="checkbox" id="useCache"><span>缓存翻译结果<em>（存在本地磁盘，刷新页面、关标签、重启浏览器都不会丢）</em></span></label>
@@ -182,24 +161,6 @@
       <span class="testOut" id="posOut"></span>
     </div>
     <p class="note">在视频里把鼠标移到字幕框上会浮出三个手柄：<strong>左侧圆点</strong>拖动位置，<strong>左右两条竖线</strong>拖动宽度，双击任意手柄复位。框内文字可以直接选中复制，选中期间字幕会暂停刷新。</p>
-  </section>
-
-  <section class="card">
-    <h2>高级</h2>
-    <div class="grid2">
-      <div class="field">
-        <label for="temperature">temperature</label>
-        <input id="temperature" type="text" placeholder="留空 = 不发送">
-      </div>
-      <div class="field">
-        <label for="maxTokens">max_tokens</label>
-        <input id="maxTokens" type="text" placeholder="留空 = 不发送">
-      </div>
-    </div>
-    <div class="field">
-      <label for="extraPrompt">附加提示词</label>
-      <textarea id="extraPrompt" rows="3" placeholder="例如：主播是 Lex Fridman，涉及大量 AI 与神经科学术语，术语保留英文并在首次出现时括注中文。"></textarea>
-    </div>
   </section>
 
   <section class="card">

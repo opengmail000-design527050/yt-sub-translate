@@ -3,8 +3,10 @@ import { DEFAULTS, getSettings, setSettings, resolveTargetName, uiLanguage,
 
 const $ = (id) => document.getElementById(id);
 
-const TEXT_FIELDS = ['baseUrl', 'apiKey', 'model', 'targetLang', 'temperature', 'maxTokens',
-                     'extraPrompt', 'reasoningStyle', 'layout', 'fontFamily', 'density'];
+/* 只列设置页里真正存在的控件。分批/并发/温度/附加提示词等仍在 DEFAULTS 里生效，
+   只是不再暴露给用户调整（已调好，改动收益低、出错风险高）。 */
+const TEXT_FIELDS = ['baseUrl', 'apiKey', 'model', 'targetLang',
+                     'reasoningStyle', 'layout', 'fontFamily', 'density'];
 
 /* 与 content.js 里的 FONT_STACKS 保持一致 */
 const FONT_STACKS = {
@@ -19,10 +21,6 @@ const FONT_NOTES = {
   kai: '楷体最有手写的味道，但笔画细，建议配合更大的字号和更深的底色。'
 };
 const RANGE_FIELDS = {
-  batchLines: (v) => v,
-  batchChars: (v) => v,
-  lookahead: (v) => v,
-  concurrency: (v) => v,
   origScale: (v) => Number(v).toFixed(2),
   bgOpacity: (v) => Number(v).toFixed(2),
   maxWidth: (v) => v + '%',
