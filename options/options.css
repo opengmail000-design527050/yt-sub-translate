@@ -250,3 +250,7 @@ button { font: inherit; cursor: pointer; border-radius: 8px; }
   transition: opacity .2s ease, transform .2s ease;
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* 自定义 API 地址的权限提示 */
+.note.warn { color: #b4530a; }
+.hidden { display: none !important; }

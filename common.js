@@ -108,3 +108,28 @@ export async function setSettings(patch) {
   await chrome.storage.local.set({ settings: next });
   return next;
 }
+
+/* ------------------------------------------------------------------ *
+ * 自定义 API 地址的可选权限
+ * manifest 只静态声明了 youtube 和 api.openai.com；填别的地址时按需申请，
+ * 免得安装时就向用户要「所有网站」的权限。
+ * ------------------------------------------------------------------ */
+
+/** 从 API 地址取出权限模式，如 https://api.example.com/*。取不出来返回 ''。 */
+export function originPattern(baseUrl) {
+  const raw = String(baseUrl || '').trim().replace(/\s+/g, '').replace(/#$/, '');
+  if (!raw) return '';
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return '';
+    return u.protocol + '//' + u.hostname + '/*';
+  } catch (_) { return ''; }
+}
+
+/** 是否已经能访问这个地址（manifest 里静态声明过的也算已授权）。 */
+export async function hasApiPermission(baseUrl) {
+  const origins = originPattern(baseUrl);
+  if (!origins) return true;              // 地址本身无效，交给请求阶段报错
+  try { return await chrome.permissions.contains({ origins: [origins] }); }
+  catch (_) { return true; }
+}

@@ -19,6 +19,7 @@
       <label for="baseUrl">API 地址</label>
       <input id="baseUrl" type="text" spellcheck="false" placeholder="https://api.openai.com/v1">
       <p class="note">任何 OpenAI 兼容接口都行，填到 <code>/v1</code> 为止即可，会自动补 <code>/chat/completions</code>。若你的地址是完整路径，结尾加一个 <code>#</code> 表示原样使用。</p>
+      <p class="note warn hidden" id="permNote"><span id="permText"></span> <button class="mini" id="permBtn" type="button">授权访问</button></p>
     </div>
 
     <div class="field">

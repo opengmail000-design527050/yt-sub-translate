@@ -1,4 +1,5 @@
-import { DEFAULTS, getSettings, setSettings, resolveTargetName, uiLanguage } from '../common.js';
+import { DEFAULTS, getSettings, setSettings, resolveTargetName, uiLanguage,
+         originPattern, hasApiPermission } from '../common.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -51,6 +52,7 @@ async function init() {
   bind();
   paintPreview();
   paintPos();
+  paintPerm();
   refreshStats();
 }
 
@@ -81,6 +83,30 @@ function paintPos() {
   $('resetPos').disabled = !custom;
 }
 
+/* ------------------------------------------------------------------ *
+ * 自定义 API 地址的权限
+ * manifest 只静态声明了 api.openai.com。填别的地址时在这里按需申请，
+ * 这样安装时不用向用户要「所有网站」的权限。
+ * ------------------------------------------------------------------ */
+async function paintPerm() {
+  const note = $('permNote');
+  const origin = originPattern(S.baseUrl);
+  const ok = !origin || (await hasApiPermission(S.baseUrl));
+  note.classList.toggle('hidden', ok);
+  if (!ok) $('permText').textContent = `还没有访问 ${origin.slice(0, -2)} 的权限，翻译会失败。`;
+}
+
+/** 返回是否拿到了权限。必须由用户点击触发，Chrome 才允许弹这个授权框。 */
+async function requestApiPermission() {
+  const origins = originPattern(S.baseUrl);
+  if (!origins) return true;
+  let granted = false;
+  try { granted = await chrome.permissions.request({ origins: [origins] }); } catch (_) {}
+  await paintPerm();
+  if (granted) toast('已授权');
+  return granted;
+}
+
 function bind() {
   TEXT_FIELDS.forEach((k) => {
     $(k).addEventListener('change', () => commit({ [k]: $(k).value.trim() }));
@@ -107,6 +133,7 @@ function bind() {
   });
 
   $('testBtn').addEventListener('click', runTest);
+  $('permBtn').addEventListener('click', requestApiPermission);
   $('clearCache').addEventListener('click', clearCache);
   $('resetStats').addEventListener('click', resetStats);
   $('resetPos').addEventListener('click', () => commit({ posX: null, posY: null }));
@@ -123,6 +150,7 @@ async function commit(patch) {
   S = await setSettings(patch);
   paintPreview();
   paintPos();
+  if ('baseUrl' in patch) paintPerm();
   toast('已保存');
   broadcast();
 }
@@ -139,6 +167,14 @@ async function broadcast() {
 async function runTest() {
   const out = $('testOut');
   out.className = 'testOut';
+
+  // 测试按钮本身就是一次用户手势，顺手把缺的地址权限要了
+  if (!(await hasApiPermission(S.baseUrl)) && !(await requestApiPermission())) {
+    out.className = 'testOut bad';
+    out.textContent = '没有访问该 API 地址的权限，已取消';
+    return;
+  }
+
   out.textContent = '请求中…';
   $('testBtn').disabled = true;
 

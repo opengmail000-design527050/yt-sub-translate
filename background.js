@@ -1,4 +1,4 @@
-import { DEFAULTS, getSettings, resolveTargetName, CODE_TO_NAME } from './common.js';
+import { DEFAULTS, getSettings, resolveTargetName, CODE_TO_NAME, hasApiPermission } from './common.js';
 
 /* ------------------------------------------------------------------ *
  * 消息入口
@@ -41,6 +41,9 @@ chrome.commands.onCommand.addListener(async (cmd) => {
 function errText(e) {
   return String((e && e.message) || e || 'unknown error');
 }
+
+// 非默认 API 地址需要用户在设置页单独授权（manifest 里只静态声明了 api.openai.com）
+const PERM_HINT = '还没有访问这个 API 地址的权限：打开设置页，在「API 地址」下面点「授权访问」。';
 
 function joinUrl(base) {
   let b = String(base || '').trim().replace(/\s+/g, '');
@@ -91,6 +94,7 @@ function applyReasoning(body, s) {
 async function translateBatch(payload) {
   const s = await getSettings();
   if (!s.apiKey) return { ok: false, error: '还没填 API Key（点插件图标 → 设置）' };
+  if (!(await hasApiPermission(s.baseUrl))) return { ok: false, error: PERM_HINT };
 
   const lines = payload.lines || [];
   if (!lines.length) return { ok: true, map: {}, usage: null };
@@ -280,6 +284,7 @@ async function addUsage(usage) {
 async function testApi(override) {
   const s = Object.assign({}, DEFAULTS, await getSettings(), override || {});
   if (!s.apiKey) return { ok: false, error: '缺少 API Key' };
+  if (!(await hasApiPermission(s.baseUrl))) return { ok: false, error: PERM_HINT };
 
   const body = {
     model: s.model,
