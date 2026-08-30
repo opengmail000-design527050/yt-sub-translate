@@ -106,6 +106,9 @@
     curIdx: -1,
     cache: null,             // { items: {hash: text} }
     cacheDirty: false,
+    /* 「这一版」的编号：切视频、重新切句、改了影响译文的设置都会 +1。
+     * 所有异步回来的结果写回前先对一下号，不然旧响应会写进新状态。 */
+    epoch: 0,
     trackRequested: false,
     fallbackTried: false
   };
@@ -361,9 +364,25 @@
   /* ------------------------------------------------------------------ *
    * 缓存
    * ------------------------------------------------------------------ */
+  /* 凡是会改变译文内容的设置都要进缓存键，否则换了服务商、提示词或推理档位之后
+   * 还会命中上一套配置的结果。目标语言用解析后的值，'auto' 在不同浏览器语言下不会串。 */
+  function cacheSig() {
+    const base = String(S.baseUrl || '').trim();
+    return [
+      S.model || '',
+      targetCode() || S.targetLang || '',
+      base.endsWith('/') ? base.slice(0, -1) : base,
+      S.reasoning || '',
+      S.reasoningStyle || '',
+      String(S.temperature === null || S.temperature === undefined ? '' : S.temperature),
+      String(S.maxTokens === null || S.maxTokens === undefined ? '' : S.maxTokens),
+      S.useContext ? 'ctx' : '',
+      String(S.extraPrompt || '').trim()
+    ].join('|');
+  }
+
   function cacheKey(videoId) {
-    // 用解析后的目标语言，'auto' 在不同浏览器语言下不会串到同一份缓存
-    return 'c_' + videoId + '_' + hash((S.model || '') + '|' + (targetCode() || S.targetLang || ''));
+    return 'c_' + videoId + '_' + hash(cacheSig());
   }
 
   /* 单独维护一份 { key: 最后使用时间 } 索引，这样清理时不用把所有缓存正文读进内存 */
@@ -470,6 +489,7 @@
   async function runBatch(bi) {
     const b = st.batches[bi];
     if (!b || b.state !== 'idle') return;
+    const epoch = st.epoch;      // 记下这批属于哪一版，回来时核对
     b.state = 'run';
     st.running++;
     st.status = 'translating';
@@ -491,37 +511,54 @@
       if (prev) context = prev.text.slice(-220);
     }
 
+    let res = null, err = '';
     try {
-      const res = await chrome.runtime.sendMessage({
+      res = await chrome.runtime.sendMessage({
         type: 'translateBatch',
         payload: { lines, context, sourceLang: st.sourceLang }
       });
-      if (res && res.ok) {
-        let got = 0;
-        for (const k in res.map) {
-          const id = Number(k);
-          const tr = String(res.map[k] || '').trim();
-          if (!tr) continue;
-          st.trans.set(id, tr);
-          st.dropped.delete(id);
-          const seg = st.segments[id];
-          if (seg) cachePut(seg.text, tr);
-          got++;
-        }
-        // 补翻之后仍然没回来的行：不再干等，直接只显示原文
-        for (const id of (res.dropped || [])) st.dropped.add(Number(id));
-        b.state = got ? 'done' : 'err';
-        st.error = '';
-      } else {
-        b.state = 'err';
-        st.error = (res && res.error) || '翻译失败';
-      }
     } catch (e) {
-      b.state = 'err';
-      st.error = String((e && e.message) || e);
+      err = String((e && e.message) || e);
     }
 
-    st.running--;
+    st.running--;   // 名额先还回去，不管这批还算不算数
+
+    /* 等待期间切了视频、改了模型/目标语言、或重新切过句：这批结果已经不对应当前状态。
+     * 直接丢弃 —— 尤其不能写缓存，st.segments 可能已经是另一个视频的，
+     * 那会把旧视频的译文按新视频的原文哈希存起来，重看时永久错乱。 */
+    if (epoch !== st.epoch) return;
+
+    if (err) {
+      b.state = 'err';
+      st.error = err;
+    } else if (res && res.ok) {
+      let got = 0;
+      for (const k in res.map) {
+        const id = Number(k);
+        const tr = String(res.map[k] || '').trim();
+        if (!tr) continue;
+        st.trans.set(id, tr);
+        st.dropped.delete(id);
+        const seg = st.segments[id];
+        if (seg) cachePut(seg.text, tr);
+        got++;
+      }
+      // 补翻之后仍然没回来的行：不再干等，直接只显示原文
+      for (const id of (res.dropped || [])) st.dropped.add(Number(id));
+      if (got) {
+        b.state = 'done';
+        st.error = '';
+      } else {
+        // 整批错位时后端不会进补翻，会返回 ok 但空 map。
+        // 这里必须留下错误信息，否则状态会显示「已就绪」而 popup 也不给重试入口。
+        b.state = 'err';
+        st.error = '这一批模型没给出可用的译文，可以点重试';
+      }
+    } else {
+      b.state = 'err';
+      st.error = (res && res.error) || '翻译失败';
+    }
+
     render();
     updateStatus();
     schedule();
@@ -529,6 +566,18 @@
 
   function retryErrors() {
     for (const b of st.batches) if (b.state === 'err') b.state = 'idle';
+
+    // 补翻后仍然缺译文的行所在的批次，也再给一次机会
+    if (st.dropped.size) {
+      for (const b of st.batches) {
+        if (b.state !== 'idle') {
+          for (const id of st.dropped) {
+            if (id >= b.from && id <= b.to) { b.state = 'idle'; break; }
+          }
+        }
+      }
+      st.dropped = new Set();
+    }
     st.error = '';
     schedule();
   }
@@ -978,6 +1027,7 @@
    * ------------------------------------------------------------------ */
   function resetVideo(data) {
     saveCacheNow();
+    st.epoch++;                       // 在途的旧请求从此作废
     st.videoId = data.videoId;
     st.title = data.title || '';
     st.audioLang = data.audioLang || '';
@@ -996,16 +1046,28 @@
     st.cache = null;
     removeOverlay();
 
+    stop(false);
+    evaluateTracks();
+  }
+
+  /* 按当前 st.tracks 定原声语言、定是否需要翻译，并决定要不要自动开始。
+   * 单独抽出来是因为字幕轨可能比第一份播放器信息晚到 —— 那时必须重跑这一整套，
+   * 只更新 st.tracks 会让视频永远停在「无字幕」。 */
+  function evaluateTracks() {
     const pick = chooseTrack(st.tracks, st.audioLang);
     st.sourceLang = pick ? pick.spoken : '';
     const tgt = targetCode();
     // 认不出目标语言时（自定义写法）就照翻，别自作主张跳过
     st.needsTranslation = !!pick && !sameLang(st.sourceLang, tgt);
 
-    stop(false);
+    if (!st.tracks.length) {
+      if (!st.active) { st.status = 'nosub'; renderStatusChip(); }
+      return;
+    }
+    if (st.status === 'nosub') st.status = 'idle';
 
-    if (!st.tracks.length) { st.status = 'nosub'; renderStatusChip(); return; }
-    if (S.enabled && S.autoStart && st.needsTranslation) start();
+    if (!st.active && !st.userOff && S.enabled && S.autoStart && st.needsTranslation) start();
+    else updateStatus();
   }
 
   function saveCacheNow() {
@@ -1017,7 +1079,11 @@
     }
   }
 
-  async function onTrackBody(body) {
+  async function onTrackBody(data) {
+    const body = data && data.body;
+    // 字幕体是异步取回来的，可能属于上一个视频。inject.js 一直都带着 videoId，
+    // 这里只是之前没核对：不核对的话，旧视频的字幕会挂到新视频上。
+    if (data && data.videoId && st.videoId && data.videoId !== st.videoId) return;
     if (st.segments.length) return;
     if (!body || typeof body !== 'string') return;
     const cues = body.trim().startsWith('<') ? parseXml(body) : (parseJson3(body) || parseXml(body));
@@ -1028,7 +1094,9 @@
     if (!st.segments.length) { st.status = 'nosub'; renderStatusChip(); return; }
     st.batches = makeBatches(st.segments);
 
+    const epoch = st.epoch;
     await loadCache(st.videoId);
+    if (epoch !== st.epoch) return;          // 读缓存期间又切了视频
     applyCacheToAll();
 
     if (st.active) { schedule(); render(); }
@@ -1038,6 +1106,7 @@
   /** 改了字幕长度档位后重新切句。缓存按原文哈希存，没变的句子仍然直接命中，不会重复花钱。 */
   function resegment() {
     if (!st.rawCues || !st.rawCues.length) return;
+    st.epoch++;              // 分段变了，在途请求带的是旧 segment id，必须作废
     st.segments = buildSegments(st.rawCues);
     st.trans = new Map();
     st.dropped = new Set();
@@ -1060,9 +1129,15 @@
       const d = m.data || {};
       if (!d.videoId) return;
       if (d.videoId !== st.videoId) resetVideo(d);
-      else if (!st.tracks.length && d.tracks && d.tracks.length) st.tracks = d.tracks;
+      else if (d.tracks && d.tracks.length !== st.tracks.length) {
+        // 字幕轨比第一份播放器信息晚到（常见于刚上传或长视频）：
+        // 光更新数组不够，语言判定、状态、自动开始都得重来一遍
+        st.tracks = d.tracks;
+        if (!st.audioLang && d.audioLang) st.audioLang = d.audioLang;
+        evaluateTracks();
+      }
     } else if (m.type === 'track') {
-      onTrackBody(m.data && m.data.body);
+      onTrackBody(m.data);
     } else if (m.type === 'trackfail') {
       if (st.active && !st.fallbackTried) {
         st.fallbackTried = true;
@@ -1108,16 +1183,10 @@
     if (msg.type === 'setActive') { msg.value ? start() : stop(true); sendResponse({ ok: true }); return true; }
     if (msg.type === 'retry') { retryErrors(); sendResponse({ ok: true }); return true; }
     if (msg.type === 'settingsChanged') {
-      const oldDensity = S.density;
-      loadSettings().then(() => {
-        applyStyleVars();
-        document.documentElement.classList.toggle('ytst-hide-native', st.active && !!S.hideNative);
-        if (!S.enabled) stop(false);
-        if (S.density !== oldDensity) resegment();
-        render();
-        schedule();
-        sendResponse({ ok: true });
-      });
+      chrome.storage.local.get('settings')
+        .then((got) => applySettings(got.settings))
+        .then(() => sendResponse({ ok: true }))
+        .catch(() => sendResponse({ ok: false }));
       return true;
     }
   });
@@ -1129,11 +1198,61 @@
     } catch (_) {}
   }
 
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local' || !changes.settings) return;
-    S = Object.assign({}, DEFAULTS, changes.settings.newValue || {});
+  /* 改了会改变译文内容的设置：已有译文和在途请求都不能留 */
+  const OUTPUT_KEYS = ['model', 'targetLang', 'baseUrl', 'extraPrompt',
+                       'reasoning', 'reasoningStyle', 'temperature', 'maxTokens', 'useContext'];
+  /* 只影响怎么分批，译文本身不变，保留已翻好的部分 */
+  const BATCH_KEYS = ['batchChars', 'batchLines'];
+
+  /* 设置变更只走这一条路径。设置页会同时触发 storage.onChanged 和 settingsChanged 消息，
+   * 两边都进这里；第二次进来时新旧值已经相同，只会重刷样式，不会重复作废译文。 */
+  async function applySettings(raw) {
+    const old = S;
+    S = Object.assign({}, DEFAULTS, raw || {});
+
     applyStyleVars();
     document.documentElement.classList.toggle('ytst-hide-native', st.active && !!S.hideNative);
+
+    if (!S.enabled) { stop(false); return; }
+
+    if (S.density !== old.density) { resegment(); return; }   // 内部已经作废并重建
+
+    if (OUTPUT_KEYS.some((k) => S[k] !== old[k])) { await invalidateTranslations(); return; }
+
+    if (st.segments.length && BATCH_KEYS.some((k) => S[k] !== old[k])) {
+      st.batches = makeBatches(st.segments);
+      applyCacheToAll();
+    }
+    render();
+    schedule();
+  }
+
+  /* 换了模型 / 目标语言 / 提示词之后：作废在途请求和已有译文，按新的缓存键重新来过。
+   * 不这么做的话，一段字幕会前半截是旧语言、后半截是新语言，
+   * 而且旧请求回来还会写进新配置对应的缓存。 */
+  async function invalidateTranslations() {
+    st.epoch++;                 // 在途请求回来会被 runBatch 的守卫丢掉
+    st.trans = new Map();
+    st.dropped = new Set();
+    st.error = '';
+    st.cacheDirty = false;      // 没落盘的旧译文属于旧配置，别写了
+    st.cache = null;
+    st.batches = st.segments.length ? makeBatches(st.segments) : [];
+
+    if (st.videoId && st.segments.length) {
+      const epoch = st.epoch;
+      await loadCache(st.videoId);
+      if (epoch !== st.epoch) return;
+      applyCacheToAll();
+    }
+    render();
+    updateStatus();
+    schedule();
+  }
+
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !changes.settings) return;
+    applySettings(changes.settings.newValue);
   });
 
   window.addEventListener('beforeunload', saveCacheNow);

@@ -111,7 +111,11 @@ async function translateBatch(payload) {
 
   const first = await askModel(s, items, payload.context, false, payload.sourceLang);
   bump(first.usage);
-  if (first.error) return { ok: false, error: first.error };
+  if (first.error) {
+    // 失败的请求也可能已经烧掉了 token（例如推理占满预算后返回空内容），别漏记
+    if (totals.prompt_tokens || totals.completion_tokens) await addUsage(totals);
+    return { ok: false, error: first.error };
+  }
   const got = first.map;
 
   // 模型把相邻几行并成一句、剩下的留空 —— 这是字幕翻译最常见的失败，单独补翻一次
@@ -269,13 +273,20 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /* ------------------------------------------------------------------ *
  * 用量统计
  * ------------------------------------------------------------------ */
-async function addUsage(usage) {
-  const got = await chrome.storage.local.get('stats');
-  const st = got.stats || { requests: 0, prompt: 0, completion: 0, since: Date.now() };
-  st.requests += 1;
-  st.prompt += Number(usage.prompt_tokens || usage.input_tokens || 0);
-  st.completion += Number(usage.completion_tokens || usage.output_tokens || 0);
-  await chrome.storage.local.set({ stats: st });
+/* 统计是「读出来 → 加 → 写回去」，并发的批次同时完成会互相覆盖。
+ * 串成一条队列，写入就不会丢。service worker 里只有这一个写入方，够用了。 */
+let usageQueue = Promise.resolve();
+
+function addUsage(usage) {
+  usageQueue = usageQueue.then(async () => {
+    const got = await chrome.storage.local.get('stats');
+    const st = got.stats || { requests: 0, prompt: 0, completion: 0, since: Date.now() };
+    st.requests += 1;
+    st.prompt += Number(usage.prompt_tokens || usage.input_tokens || 0);
+    st.completion += Number(usage.completion_tokens || usage.output_tokens || 0);
+    await chrome.storage.local.set({ stats: st });
+  }).catch(() => {});
+  return usageQueue;
 }
 
 /* ------------------------------------------------------------------ *
