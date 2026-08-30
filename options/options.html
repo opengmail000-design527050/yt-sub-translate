@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>YT 字幕译 · 设置</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+<main>
+  <header class="page-head">
+    <div class="brand"><span class="mark">译</span><h1>YT 字幕译</h1></div>
+    <p class="sub">只做一件事：把 YouTube 的英文字幕，变成能一眼看懂的中文。</p>
+  </header>
+
+  <section class="card">
+    <h2>模型与接口</h2>
+
+    <div class="field">
+      <label for="baseUrl">API 地址</label>
+      <input id="baseUrl" type="text" spellcheck="false" placeholder="https://api.openai.com/v1">
+      <p class="note">任何 OpenAI 兼容接口都行，填到 <code>/v1</code> 为止即可，会自动补 <code>/chat/completions</code>。若你的地址是完整路径，结尾加一个 <code>#</code> 表示原样使用。</p>
+    </div>
+
+    <div class="field">
+      <label for="apiKey">API Key</label>
+      <div class="inline">
+        <input id="apiKey" type="password" spellcheck="false" placeholder="sk-...">
+        <button class="mini" id="toggleKey" type="button">显示</button>
+      </div>
+      <p class="note">只保存在这台电脑的浏览器本地存储里，不会同步、也不会发到别处。</p>
+    </div>
+
+    <div class="grid2">
+      <div class="field">
+        <label for="model">模型</label>
+        <input id="model" type="text" spellcheck="false" list="modelList" placeholder="gpt-5.1">
+        <datalist id="modelList">
+          <option value="gpt-5.6-luna"></option>
+          <option value="gpt-5.1"></option>
+          <option value="gpt-5.1-mini"></option>
+          <option value="claude-haiku-4-5-20251001"></option>
+          <option value="deepseek-chat"></option>
+          <option value="qwen-plus"></option>
+          <option value="gemini-2.5-flash"></option>
+        </datalist>
+        <p class="note">换代直接改这里就行，同档次的新模型（如后续 GPT-5.x-luna）不需要改别的设置。</p>
+      </div>
+      <div class="field">
+        <label for="targetLang">译文语言</label>
+        <input id="targetLang" type="text" list="langList" placeholder="auto">
+        <datalist id="langList">
+          <option value="auto"></option>
+          <option value="简体中文"></option>
+          <option value="繁體中文"></option>
+          <option value="English"></option>
+          <option value="日本語"></option>
+        </datalist>
+        <p class="note" id="langNote"></p>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="reasoningStyle">推理参数写法</label>
+      <select id="reasoningStyle">
+        <option value="effort_none">reasoning_effort 含 "none"（GPT-5 系列，推荐）</option>
+        <option value="effort">reasoning_effort，关闭时不发该字段 · 保守兼容</option>
+        <option value="enable_thinking">enable_thinking（通义 / DeepSeek 风格）</option>
+        <option value="off">从不发送推理参数</option>
+      </select>
+      <p class="note">弹窗里的「关闭 / 低 / 中」按钮控制强度，这里只决定用哪种参数名发给服务商。<strong>第一项才能真正关掉推理</strong>——第二项在「关闭」时不发字段，模型会退回它自己的默认档，既慢又贵。只有在服务商报 400 时才改用其他项。</p>
+    </div>
+
+    <div class="actions">
+      <button class="primary" id="testBtn" type="button">测试连接</button>
+      <span class="testOut" id="testOut"></span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>省 token</h2>
+    <p class="lead">默认已经按「长播客」调好：整句合并后再翻，只翻你看到的部分，看过的存缓存。</p>
+
+    <div class="grid2">
+      <div class="field">
+        <label for="batchLines">每批句数 <span class="v" id="batchLinesV"></span></label>
+        <input id="batchLines" type="range" min="5" max="30" step="1">
+        <p class="note">越大越省（提示词摊薄），但出错时重来的成本更高。</p>
+      </div>
+      <div class="field">
+        <label for="batchChars">每批字符上限 <span class="v" id="batchCharsV"></span></label>
+        <input id="batchChars" type="range" min="400" max="3000" step="100">
+      </div>
+      <div class="field">
+        <label for="lookahead">预翻译句数 <span class="v" id="lookaheadV"></span></label>
+        <input id="lookahead" type="range" min="10" max="200" step="5">
+        <p class="note">只翻播放头之后这么多句。三小时的播客你只看了二十分钟，就只花二十分钟的钱。</p>
+      </div>
+      <div class="field">
+        <label for="concurrency">并发请求 <span class="v" id="concurrencyV"></span></label>
+        <input id="concurrency" type="range" min="1" max="5" step="1">
+      </div>
+    </div>
+
+    <label class="check"><input type="checkbox" id="useContext"><span>带上一句原文做上下文<em>（连贯性更好，每批多约 30 token）</em></span></label>
+    <label class="check"><input type="checkbox" id="useCache"><span>缓存翻译结果<em>（存在本地磁盘，刷新页面、关标签、重启浏览器都不会丢）</em></span></label>
+
+    <div class="grid2">
+      <div class="field">
+        <label for="cacheDays">缓存保留 <span class="v" id="cacheDaysV"></span></label>
+        <input id="cacheDays" type="range" min="7" max="365" step="1">
+        <p class="note">超过这个天数没再看过的视频才会被清掉。重看会重新计时。</p>
+      </div>
+      <div class="field">
+        <label for="cacheMax">最多缓存视频数 <span class="v" id="cacheMaxV"></span></label>
+        <input id="cacheMax" type="range" min="20" max="1000" step="10">
+        <p class="note">超出时先淘汰最久没看的。</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>字幕外观</h2>
+
+    <div class="grid2">
+      <div class="field">
+        <label for="layout">显示方式</label>
+        <select id="layout">
+          <option value="both">双语（原文 + 译文）</option>
+          <option value="transOnly">仅译文</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="density">字幕长度</label>
+        <select id="density">
+          <option value="compact">紧凑 · 尽量一行放下（约 96 字符）</option>
+          <option value="standard">标准 · 兼顾完整与高度（约 130 字符）</option>
+          <option value="full">完整 · 长句不拆（约 180 字符）</option>
+        </select>
+        <p class="note" id="densityNote"></p>
+      </div>
+      <div class="field">
+        <label for="fontFamily">字体</label>
+        <select id="fontFamily">
+          <option value="serif">雅致衬线 · Georgia + 思源宋体</option>
+          <option value="sans">现代无衬线 · Inter + 思源黑体</option>
+          <option value="kai">书卷楷体 · Constantia + 楷体</option>
+        </select>
+        <p class="note" id="fontNote"></p>
+      </div>
+    </div>
+
+    <div class="preview-stage" id="previewStage">
+      <div class="preview" id="preview">
+        <div class="pv-orig">So the question I keep coming back to is what intelligence really is, and whether we would even recognise it.</div>
+        <div class="pv-trans">所以我一直绕回来的那个问题是，智能到底是什么，以及我们是不是真能认出它来。</div>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="field">
+        <label for="origScale">原文相对字号 <span class="v" id="origScaleV"></span></label>
+        <input id="origScale" type="range" min="0.5" max="1" step="0.02">
+        <p class="note">原文与译文颜色深度一致，只靠字号分主次。</p>
+      </div>
+      <div class="field">
+        <label for="bgOpacity">底色深度 <span class="v" id="bgOpacityV"></span></label>
+        <input id="bgOpacity" type="range" min="0" max="0.9" step="0.05">
+      </div>
+      <div class="field">
+        <label for="maxWidth">字幕框最大宽度 <span class="v" id="maxWidthV"></span></label>
+        <input id="maxWidth" type="range" min="20" max="96" step="1">
+        <p class="note">框宽随文字多少自动伸缩，这里设的是它最宽能撑到多少（占画面宽度）。调宽一点，长句就少折行、框不会变得那么高。也可以直接在视频里拖字幕框的左右边缘。</p>
+      </div>
+    </div>
+
+    <label class="check"><input type="checkbox" id="autoScale"><span>字号随画面大小放大<em>（全屏时按播放器高度成比例放大，只放大不缩小）</em></span></label>
+    <label class="check"><input type="checkbox" id="hideNative"><span>隐藏 YouTube 自带字幕<em>（我们自己渲染，避免重影）</em></span></label>
+
+    <div class="actions">
+      <button class="ghost" id="resetPos" type="button">把字幕框放回底部居中</button>
+      <span class="testOut" id="posOut"></span>
+    </div>
+    <p class="note">在视频里把鼠标移到字幕框上会浮出三个手柄：<strong>左侧圆点</strong>拖动位置，<strong>左右两条竖线</strong>拖动宽度，双击任意手柄复位。框内文字可以直接选中复制，选中期间字幕会暂停刷新。</p>
+  </section>
+
+  <section class="card">
+    <h2>高级</h2>
+    <div class="grid2">
+      <div class="field">
+        <label for="temperature">temperature</label>
+        <input id="temperature" type="text" placeholder="留空 = 不发送">
+      </div>
+      <div class="field">
+        <label for="maxTokens">max_tokens</label>
+        <input id="maxTokens" type="text" placeholder="留空 = 不发送">
+      </div>
+    </div>
+    <div class="field">
+      <label for="extraPrompt">附加提示词</label>
+      <textarea id="extraPrompt" rows="3" placeholder="例如：主播是 Lex Fridman，涉及大量 AI 与神经科学术语，术语保留英文并在首次出现时括注中文。"></textarea>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>数据</h2>
+    <div class="statLine" id="statLine">—</div>
+    <div class="actions">
+      <button class="ghost" id="clearCache" type="button">清空翻译缓存</button>
+      <button class="ghost" id="resetStats" type="button">重置用量统计</button>
+    </div>
+  </section>
+
+  <footer class="page-foot">改动即时生效 · v0.1.0</footer>
+</main>
+
+<div class="toast" id="toast"></div>
+<script src="options.js" type="module"></script>
+</body>
+</html>

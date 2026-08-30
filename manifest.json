@@ -1,0 +1,51 @@
+{
+  "manifest_version": 3,
+  "name": "YT 字幕译",
+  "version": "0.1.0",
+  "description": "YouTube 英文字幕双语翻译，为 Lex Fridman / Joe Rogan 等长访谈与科技播客优化。",
+  "minimum_chrome_version": "116",
+  "permissions": ["storage", "unlimitedStorage"],
+  "host_permissions": ["https://www.youtube.com/*", "<all_urls>"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.youtube.com/*"],
+      "js": ["content/content.js"],
+      "css": ["content/overlay.css"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["content/inject.js"],
+      "matches": ["https://www.youtube.com/*"]
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "YT 字幕译",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "options_page": "options/options.html",
+  "commands": {
+    "toggle-translate": {
+      "suggested_key": { "default": "Alt+Shift+T" },
+      "description": "开关当前视频的翻译字幕"
+    }
+  }
+}

@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="head">
+    <div class="brand">
+      <span class="mark">译</span>
+      <span class="name">YT 字幕译</span>
+    </div>
+    <label class="switch" title="总开关">
+      <input type="checkbox" id="master">
+      <span class="track"><span class="knob"></span></span>
+    </label>
+  </header>
+
+  <section class="status" id="statusCard">
+    <div class="row">
+      <span class="dot" id="dot"></span>
+      <span class="statusText" id="statusText">未检测到视频</span>
+    </div>
+    <div class="title" id="videoTitle"></div>
+    <div class="bar"><span id="barFill"></span></div>
+    <button class="ghost hidden" id="retryBtn">重试失败的批次</button>
+    <div class="err hidden" id="errText"></div>
+  </section>
+
+  <section class="block">
+    <div class="label">推理强度</div>
+    <div class="seg" id="reasoning">
+      <button data-v="none">关闭</button>
+      <button data-v="low">低</button>
+      <button data-v="medium">中</button>
+    </div>
+    <div class="hint" id="reasonHint">字幕翻译一般「关闭」就够，最快最省。</div>
+  </section>
+
+  <section class="block">
+    <div class="labelRow">
+      <span class="label">字号</span>
+      <span class="val" id="fontVal">22</span>
+    </div>
+    <input type="range" id="fontSize" min="14" max="64" step="1">
+    <div class="hint">全屏时会按画面高度自动放大，这里是小窗口下的基准值。</div>
+  </section>
+
+  <section class="block tight">
+    <label class="check">
+      <input type="checkbox" id="autoStart">
+      <span>英文视频自动开启</span>
+    </label>
+  </section>
+
+  <footer class="foot">
+    <span class="usage" id="usage">—</span>
+    <button class="link" id="openOptions">设置</button>
+  </footer>
+
+  <script src="popup.js" type="module"></script>
+</body>
+</html>
