@@ -495,11 +495,24 @@
     st.status = 'translating';
     renderStatusChip();
 
+    /* 送出去之前先摘两类不必花钱的行：
+     * 1. 缓存里已经有的 —— 访谈里「Right.」「Exactly.」这类短句整段视频反复出现，
+     *    翻过一次就不用再送（applyCacheToAll 只在载入时跑一次，接不到本次会话新写入的）；
+     * 2. 同一批里原文完全相同的 —— 只送一条，回来后写给所有相同的行。 */
     const lines = [];
+    const firstOf = new Map();   // 原文 -> 已排进 lines 的那一行 id
+    const alias = new Map();     // 被合并掉的行 id -> 代表行 id
     for (let i = b.from; i <= b.to; i++) {
       const seg = st.segments[i];
       if (!seg) continue;
       if (st.trans.has(i)) continue;
+
+      const cached = cacheGet(seg.text);
+      if (cached) { st.trans.set(i, cached); st.dropped.delete(i); continue; }
+
+      const rep = firstOf.get(seg.text);
+      if (rep !== undefined) { alias.set(i, rep); continue; }
+      firstOf.set(seg.text, i);
       lines.push({ id: i, text: seg.text });
     }
 
@@ -542,6 +555,11 @@
         const seg = st.segments[id];
         if (seg) cachePut(seg.text, tr);
         got++;
+      }
+      // 批内被合并掉的重复行，跟着代表行一起填上
+      for (const [id, repId] of alias) {
+        const tr = st.trans.get(repId);
+        if (tr) { st.trans.set(id, tr); st.dropped.delete(id); got++; }
       }
       // 补翻之后仍然没回来的行：不再干等，直接只显示原文
       for (const id of (res.dropped || [])) st.dropped.add(Number(id));

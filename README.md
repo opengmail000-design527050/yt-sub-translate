@@ -164,3 +164,13 @@ popup/               弹窗（开关、推理强度、显示）
 options/             设置页（API、省 token、外观、数据）
 icons/make-icons.js  图标生成脚本（node icons/make-icons.js）
 ```
+
+## 测试
+
+```
+node test/state.test.js
+```
+
+用桩环境（假 chrome API + 假 DOM）真实加载 `content/content.js`，覆盖状态机里几条
+出过问题的路径：切视频时的在途请求、字幕轨迟到、播放中改设置、整批错位时的报错、
+缓存键的区分度、重复原文的去重。不联网，不碰真实存储。
