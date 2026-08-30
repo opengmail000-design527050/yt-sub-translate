@@ -77,6 +77,19 @@ function bind() {
     refreshStatus();
   });
 
+  /* 错位的译文会按原文哈希存进缓存，刷新页面只会再命中同一份错的。
+   * 给一个「把这个视频的缓存扔了重翻」的出口。 */
+  $('purgeBtn').addEventListener('click', async () => {
+    if (!tabId) return;
+    const b = $('purgeBtn');
+    b.disabled = true;
+    b.textContent = '正在重翻…';
+    try { await chrome.tabs.sendMessage(tabId, { type: 'purgeCache' }); } catch (_) {}
+    b.disabled = false;
+    b.textContent = '译文和原文对不上？重翻本视频';
+    refreshStatus();
+  });
+
   $('openOptions').addEventListener('click', () => chrome.runtime.openOptionsPage());
 }
 
@@ -105,18 +118,59 @@ async function refreshStatus() {
   } else if (!r.active && r.hasTracks && r.needsTranslation === false) {
     text = '原声已是目标语言，无需翻译';
   }
-  if (r.sourceLang && key !== 'nosub') {
-    text += `　·　识别为 ${LANG_NAMES[r.sourceLang] || LANG_NAMES[r.sourceLang.split('-')[0]] || r.sourceLang}`;
+  if (r.sourceLang && !r.trackLang && key !== 'nosub') {
+    text += `　·　识别为 ${langName(r.sourceLang)}`;
   }
   $('statusText').textContent = text;
   $('dot').dataset.s = r.active ? r.status : '';
   $('videoTitle').textContent = r.title || '';
+  paintSource(r);
   $('barFill').style.width = r.segments ? Math.round((r.translated / r.segments) * 100) + '%' : '0%';
 
   const hasErr = !!r.error;
   $('errText').textContent = r.error || '';
   $('errText').classList.toggle('hidden', !hasErr);
   $('retryBtn').classList.toggle('hidden', !hasErr);
+  $('purgeBtn').classList.toggle('hidden', !(r.active && r.segments > 0));
+}
+
+const baseLang = (c) => String(c || '').toLowerCase().split('-')[0];
+const langName = (code) =>
+  !code ? '' : (LANG_NAMES[code] || LANG_NAMES[String(code).split('-')[0]] || code);
+
+/* 现在拿哪条轨当原文，以及这个视频一共有哪些轨。
+   插件挑的不一定是原声语言 —— 视频可能压根没有原声那条轨（比如过场动画的对白
+   是游戏自己烧进画面的，YouTube 上只有别的语言的字幕）。不写出来的话，
+   用户只会看到译文莫名其妙，还以为是切换语言没生效。 */
+function paintSource(r) {
+  const el = $('srcText');
+  const parts = [];
+
+  if (r.trackLang) {
+    parts.push('字幕源：' + langName(r.trackLang) + (r.trackKind === 'asr' ? '（自动字幕）' : ''));
+  }
+
+  const tracks = r.trackList || [];
+  const list = tracks.map((t) => langName(t.lang));
+  const uniq = [...new Set(list)].filter(Boolean);
+  if (uniq.length > 1) {
+    const shown = uniq.length > 4 ? uniq.slice(0, 4).join('、') + ` 等 ${uniq.length} 种` : uniq.join('、');
+    parts.push('本视频字幕轨：' + shown);
+  } else if (tracks.length === 1 && r.trackLang) {
+    parts.push('本视频只有这一条字幕轨');
+  }
+
+  /* 音频是一种语言、却没有对应的字幕轨 —— 比如对白是游戏烧进画面的。
+     这时插件只能拿现有的轨去翻，等于翻「译文的译文」。不点破的话，
+     用户会以为是自己在字幕菜单里切换没生效。 */
+  const audio = baseLang(r.audioLang);
+  const hasAudioTrack = tracks.some((t) => baseLang(t.lang) === audio);
+  if (audio && tracks.length && !hasAudioTrack) {
+    parts.push(`没有${langName(r.audioLang)}字幕轨，只能拿现有的轨当原文`);
+  }
+
+  el.textContent = parts.join('　·　');
+  el.classList.toggle('hidden', !parts.length);
 }
 
 async function refreshUsage() {

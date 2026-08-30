@@ -102,6 +102,23 @@
 
 #ytst-overlay.ytst-trans-only .ytst-orig { display: none; }
 
+/* 底色深度拉到 0 = 完全透明。此时毛玻璃也要一起关掉，
+ * 否则底色没了、背后的画面还糊着一圈，看着就不是「透明」。
+ * 没有底板托着，白字压在亮画面上会发虚，所以把描边加厚一圈补回可读性。 */
+#ytst-overlay.ytst-no-bg .ytst-box {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+#ytst-overlay.ytst-no-bg .ytst-orig,
+#ytst-overlay.ytst-no-bg .ytst-trans {
+  text-shadow:
+    0 0 2px rgba(0, 0, 0, .95),
+    0 1px 3px rgba(0, 0, 0, .95),
+    1px 0 2px rgba(0, 0, 0, .85),
+    -1px 0 2px rgba(0, 0, 0, .85),
+    0 0 14px rgba(0, 0, 0, .6);
+}
+
 /* 选中文字时冻结，边框给个提示 */
 #ytst-overlay .ytst-box ::selection { background: rgba(242, 199, 212, .35); }
 #ytst-overlay.ytst-frozen .ytst-box { border-color: rgba(242, 199, 212, .5); }

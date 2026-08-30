@@ -81,6 +81,16 @@ body {
 @keyframes pulse { 0%,100% { opacity: .3 } 50% { opacity: 1 } }
 
 .statusText { font-size: 12.5px; color: var(--text); }
+/* 现在到底在拿哪条字幕轨当原文，以及这个视频还有哪些轨。
+   没有这一行的话，插件挑了条不是原声语言的轨，用户完全看不出来。 */
+.src {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.src.hidden { display: none; }
+
 .title {
   margin-top: 5px;
   font-size: 11.5px;

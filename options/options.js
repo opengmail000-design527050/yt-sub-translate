@@ -22,7 +22,7 @@ const FONT_NOTES = {
 };
 const RANGE_FIELDS = {
   origScale: (v) => Number(v).toFixed(2),
-  bgOpacity: (v) => Number(v).toFixed(2),
+  bgOpacity: (v) => (Number(v) <= 0 ? '全透明' : Number(v).toFixed(2)),
   maxWidth: (v) => v + '%',
   cacheDays: (v) => (Number(v) >= 365 ? '1 年' : v + ' 天'),
   cacheMax: (v) => v + ' 个'
@@ -58,7 +58,9 @@ function paintPreview() {
   const pv = $('preview');
   const stage = $('previewStage');
   pv.style.fontFamily = FONT_STACKS[S.fontFamily] || FONT_STACKS.serif;
-  pv.style.background = 'rgba(0,0,0,' + S.bgOpacity + ')';
+  const bg = Math.max(0, Number(S.bgOpacity) || 0);
+  pv.style.background = 'rgba(0,0,0,' + bg + ')';
+  pv.classList.toggle('pv-no-bg', bg <= 0);   // 与播放器里的 .ytst-no-bg 保持一致
   pv.style.maxWidth = (S.maxWidth || 88) + '%';
   if (stage) stage.title = `字幕框最宽 ${S.maxWidth || 88}%`;
   pv.querySelector('.pv-orig').style.fontSize = Math.round(S.fontSize * S.origScale) + 'px';

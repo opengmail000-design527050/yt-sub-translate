@@ -43,9 +43,14 @@
   const sameLang = (a, b) =>
     !!a && !!b && String(a).toLowerCase().split('-')[0] === String(b).toLowerCase().split('-')[0];
 
-  /** 挑一条最合适的字幕轨，并顺带确定这个视频的原声语言。
+  /** 挑一条最合适的字幕轨，并顺带确定「要翻的这段文字是什么语言」。
    *  自动字幕（ASR）一定是按原声语言生成的，所以它是最可靠的语言判据；
-   *  但人工字幕有标点、质量更好，所以同语言时优先用人工轨。 */
+   *  但人工字幕有标点、质量更好，所以同语言时优先用人工轨。
+   *
+   *  注意 spoken 返回的是**选中那条轨的语言**，不一定等于音频语言：视频可能压根
+   *  没有原声那条轨（对白是烧进画面的），这时只能退回现有的轨去翻。这个返回值
+   *  是给翻译提示词用的（要如实说明原文是什么语言），所以就该是轨的语言；
+   *  「音频疑似另一种语言」这件事由 st.audioLang 单独报给弹窗。 */
   function chooseTrack(tracks, audioLang) {
     if (!tracks || !tracks.length) return null;
     const base = (c) => String(c || '').toLowerCase().split('-')[0];
@@ -82,6 +87,17 @@
     kai: '"Constantia", "Cambria", Georgia, "Kaiti SC", STKaiti, KaiTi, "Noto Serif SC", serif'
   };
   let S = Object.assign({}, DEFAULTS);
+  /* 注入被提到了读设置之前（见 boot 的注释），所以在设置真正读回来之前
+   * 有一小段时间 S 还是 DEFAULTS —— 而 DEFAULTS 里 autoStart 是 true、
+   * targetLang 是 'auto'，跟用户存的很可能不是一回事。
+   *
+   * 这段时间里播放器信息完全可能已经到了。要是照 DEFAULTS 去判语言、判要不要自动开，
+   * 就会出现：用户明明关了自动开启却自己启动了；或者目标语言按浏览器界面语言算成英语，
+   * 把英文视频判成「不需要翻译」从此保持关闭。设置读回来之后又没人重判，就一直错到底。
+   *
+   * 所以设置没到位之前，一切判定挂起（见 evaluateTracks），到位后补跑一次。 */
+  let settingsReady = false;
+  let pendingEval = false;
 
   /* ------------------------------------------------------------------ *
    * 状态
@@ -110,7 +126,13 @@
      * 所有异步回来的结果写回前先对一下号，不然旧响应会写进新状态。 */
     epoch: 0,
     trackRequested: false,
-    fallbackTried: false
+    trackAt: 0,              // 上次点名要轨的时间，用来决定隔多久可以再要一次
+    fallbackTried: false,
+    trackSig: '',            // 当前用的是哪条字幕轨（lang|kind|tlang）
+    reqSeq: 0,               // 每次点名要轨都发一个新编号
+    wantReq: 0,              // 正在等的那个编号，只认它回来的那一份
+    wantLang: '',            // 点名要的是哪种语言，回来的对不上就不认
+    userTrack: null          // 用户在 CC 菜单里选中的轨，之后一切以它为准
   };
 
   /* ------------------------------------------------------------------ *
@@ -238,6 +260,12 @@
       return best;
     };
 
+    /* 句子边界落在 cue 之间的空格上，而空格在字符表里算作上一条 cue 的尾巴。
+     * 直接拿边界位置反查时间，新句子的开始就会被算成上一句的结束 ——
+     * 中间隔着几十秒静音时，下一句会提前几十秒冒出来。取时间前先跳过两端空白。 */
+    const skipL = (a, b) => { while (a < b && /\s/.test(full[a])) a++; return a; };
+    const skipR = (a, b) => { while (b > a && /\s/.test(full[b - 1])) b--; return b; };
+
     const timeAt = (idx) => {
       let lo = 0, hi = marks.length - 1, k = 0;
       while (lo <= hi) {
@@ -311,9 +339,10 @@
     const out = [];
     let cur = null;
     for (const p of split) {
-      const text = full.slice(p.s, p.e).trim();
+      const ps = skipL(p.s, p.e), pe = skipR(p.s, p.e);
+      const text = full.slice(ps, pe).trim();
       if (!text) continue;
-      const start = timeAt(p.s), end = timeAt(p.e);
+      const start = timeAt(ps), end = timeAt(pe);
       if (!cur) { cur = { start, end, text }; continue; }
       const joiner = (isWide(cur.text[cur.text.length - 1]) && isWide(text[0])) ? '' : ' ';
       const merged = wid(cur.text) + wid(joiner) + wid(text);
@@ -470,7 +499,7 @@
   }
 
   function schedule() {
-    if (!st.active || !st.segments.length) return;
+    if (!st.active || !st.segments.length || !settingsReady) return;
     const idx = st.curIdx >= 0 ? st.curIdx : 0;
     const limit = idx + Math.max(5, S.lookahead);
 
@@ -600,6 +629,34 @@
     schedule();
   }
 
+  /* 丢掉这个视频的缓存，从零重翻。
+   *
+   * 错位的译文是按「原文哈希 -> 译文」存下来的，刷新页面只会原样命中同一份错位结果，
+   * 重试按钮也救不回来（runBatch 看到 st.trans 里已经有了就直接跳过这一行）。
+   * 这是唯一的出口。 */
+  async function purgeCache() {
+    st.epoch++;                 // 在途请求作废，别把旧结果又写回来
+    st.trans = new Map();
+    st.dropped = new Set();
+    st.cache = { items: {} };
+    st.cacheDirty = false;
+    st.error = '';
+    st.batches = st.segments.length ? makeBatches(st.segments) : [];
+    st.curIdx = -1;
+    if (st.videoId) {
+      try {
+        const k = cacheKey(st.videoId);
+        await chrome.storage.local.remove(k);
+        const got = await chrome.storage.local.get('cacheIndex');
+        const idx = got.cacheIndex || {};
+        if (idx[k]) { delete idx[k]; await chrome.storage.local.set({ cacheIndex: idx }); }
+      } catch (_) {}
+    }
+    render();
+    updateStatus();
+    schedule();
+  }
+
   function updateStatus() {
     if (!st.active) { st.status = 'idle'; }
     else if (!st.segments.length) { st.status = st.status === 'nosub' ? 'nosub' : 'waiting'; }
@@ -650,7 +707,10 @@
     if (!overlay) return;
     overlay.style.setProperty('--ytst-size', S.fontSize + 'px');
     overlay.style.setProperty('--ytst-orig-size', Math.round(S.fontSize * S.origScale) + 'px');
-    overlay.style.setProperty('--ytst-bg', 'rgba(0,0,0,' + S.bgOpacity + ')');
+    const bg = Math.max(0, Number(S.bgOpacity) || 0);
+    overlay.style.setProperty('--ytst-bg', 'rgba(0,0,0,' + bg + ')');
+    // 完全透明时要连毛玻璃一起关，见 overlay.css 里的 .ytst-no-bg
+    overlay.classList.toggle('ytst-no-bg', bg <= 0);
     overlay.style.setProperty('--ytst-maxw', (S.maxWidth || 88) + '%');
     overlay.style.setProperty('--ytst-font', FONT_STACKS[S.fontFamily] || FONT_STACKS.serif);
     overlay.classList.toggle('ytst-trans-only', S.layout === 'transOnly');
@@ -1026,11 +1086,29 @@
   }
 
   function requestTrack() {
-    if (st.trackRequested) return;
+    /* 原来是「一个视频只许要一次」。可失败的路子太多了 —— 字幕轨列表比播放器信息晚到、
+     * 直接拉取被 YouTube 拒了、兜底打开原生字幕时播放器还没装好 captions 模块。
+     * 一旦撞上，这个标签页就永远停在「等字幕」，只能重开浏览器。
+     * 改成隔一段时间可以重来一次，直到真的拿到句子为止。 */
+    if (st.trackRequested && Date.now() - st.trackAt < 8000) return;
+    if (st.segments.length) return;
     st.trackRequested = true;
+    st.trackAt = Date.now();
+    st.fallbackTried = false;
     st.status = 'waiting';
     renderStatusChip();
-    post2page('fetchTrack', { lang: st.sourceLang || '' });
+    /* 两种情况都带编号。播放器可能正在同时拉另一条轨（账号开了自动翻译、
+     * 或者视频默认轨不是原声语言），先到先得的话我们会拿「译文的译文」当原文翻，
+     * 而且从此再也换不回来。带上编号，我们点名要的那条就能盖过它。 */
+    st.wantReq = ++st.reqSeq;
+    // 用户已经在 CC 菜单里选好语言了就照办，别再按音轨去猜
+    if (st.userTrack) {
+      st.wantLang = sigLang(capSig(st.userTrack));
+      post2page('fetchTrack', trackReq(st.userTrack, st.wantReq));
+    } else {
+      st.wantLang = '';        // 没指定具体语言，页面挑哪条都认
+      post2page('fetchTrack', { reqId: st.wantReq, lang: st.sourceLang || '' });
+    }
     // 直接拉取失败/无响应时的兜底
     setTimeout(() => {
       if (st.active && !st.segments.length && !st.fallbackTried) {
@@ -1059,8 +1137,13 @@
     st.error = '';
     st.status = 'idle';
     st.trackRequested = false;
+    st.trackAt = 0;
     st.fallbackTried = false;
     st.userOff = false;
+    st.trackSig = '';
+    st.wantReq = 0;
+    st.wantLang = '';
+    st.userTrack = null;
     st.cache = null;
     removeOverlay();
 
@@ -1072,8 +1155,13 @@
    * 单独抽出来是因为字幕轨可能比第一份播放器信息晚到 —— 那时必须重跑这一整套，
    * 只更新 st.tracks 会让视频永远停在「无字幕」。 */
   function evaluateTracks() {
+    /* 设置还没读回来：先记一笔，等 boot 读完再判。
+     * 拿 DEFAULTS 判出来的结论没人会去纠正，将错就错的代价比等这几十毫秒大得多。 */
+    if (!settingsReady) { pendingEval = true; return; }
     const pick = chooseTrack(st.tracks, st.audioLang);
-    st.sourceLang = pick ? pick.spoken : '';
+    // 用户在 CC 菜单里指定过语言就听他的，别再按音轨去猜
+    const chosen = st.userTrack ? sigLang(capSig(st.userTrack)) : '';
+    st.sourceLang = chosen || (pick ? pick.spoken : '');
     const tgt = targetCode();
     // 认不出目标语言时（自定义写法）就照翻，别自作主张跳过
     st.needsTranslation = !!pick && !sameLang(st.sourceLang, tgt);
@@ -1097,20 +1185,109 @@
     }
   }
 
+  /* 一条字幕轨的身份：语言 | 是否自动字幕 | 自动翻译到哪个语言。
+   * 同一条轨不管从哪条路回来都必须算出同一个签名，否则会来回切 ——
+   * 我们自己发起的那次请求，会同时以 direct 和 fetch 劫持两种身份回来两遍。 */
+  function trackSigOf(data) {
+    const url = data && data.url;
+    if (url) {
+      try {
+        const q = new URL(url, location.href).searchParams;
+        const lang = q.get('lang') || '';
+        const tlang = q.get('tlang') || '';
+        if (lang || tlang) return lang + '|' + (q.get('kind') || '') + '|' + tlang;
+      } catch (_) {}
+    }
+    if (data && data.languageCode) return data.languageCode + '|' + (data.kind || '') + '|';
+    return '';
+  }
+
+  const capSig = (c) => (c.languageCode || '') + '|' + (c.kind || '') + '|' + (c.tlang || '');
+  /** 这条轨最终呈现的是哪种语言：自动翻译轨看 tlang，其余看 lang */
+  const sigLang = (sig) => { const p = String(sig).split('|'); return p[2] || p[0] || ''; };
+  const trackReq = (c, reqId) =>
+    ({ reqId, exact: true, lang: c.languageCode || '', kind: c.kind || '', tlang: c.tlang || '' });
+
+  /* 这份字幕到底属于哪个视频。播放器自己发的请求不经过我们，inject.js 只能从
+   * 字幕地址里的 v= 认出来；认不出来的就当成来路不明，宁可不要。 */
+  function trackVideoOf(data) {
+    if (data && data.videoId) return data.videoId;
+    try {
+      if (data && data.url) return new URL(data.url, location.href).searchParams.get('v') || '';
+    } catch (_) {}
+    return '';
+  }
+
+  /* 用户在 CC 菜单里换了语言。播放器有时会直接用自己缓存的字幕、不再发网络请求，
+   * 光靠 inject.js 的劫持会漏掉，所以这里点名去要一次。 */
+  function onCaptionTrack(cap) {
+    if (!cap || !cap.languageCode) return;
+    st.userTrack = cap;                      // 之后 requestTrack 也跟着他的选择走
+    if (capSig(cap) === st.trackSig) return; // 已经在用这条轨了
+    /* 首份字幕还在路上时换语言，同样要按新选择重新点名。原来这里直接 return，
+     * 指望交给 requestTrack()，可它因为 trackRequested 已置位不会再跑第二次 ——
+     * 结果在途的旧请求照样落地，用户刚选的语言被无声丢掉。 */
+    if (!st.active && !st.segments.length) return;
+    st.wantReq = ++st.reqSeq;
+    st.wantLang = sigLang(capSig(cap));
+    post2page('fetchTrack', trackReq(cap, st.wantReq));
+  }
+
   async function onTrackBody(data) {
     const body = data && data.body;
-    // 字幕体是异步取回来的，可能属于上一个视频。inject.js 一直都带着 videoId，
-    // 这里只是之前没核对：不核对的话，旧视频的字幕会挂到新视频上。
-    if (data && data.videoId && st.videoId && data.videoId !== st.videoId) return;
-    if (st.segments.length) return;
+    // 字幕体是异步取回来的，可能属于上一个视频（YouTube 是单页应用，切视频时
+    // 上一个视频的字幕请求还在路上）。挂错视频会串片、还会污染缓存。
+    const vid = trackVideoOf(data);
+    if (st.videoId && vid !== st.videoId) return;
     if (!body || typeof body !== 'string') return;
+
+    const sig = trackSigOf(data);
+    /* 换轨。原来这里是无条件 `if (st.segments.length) return`，
+     * 于是用户在 YouTube 里换了字幕语言之后，翻译框还挂着上一条轨的内容。
+     *
+     * 但也不能来一份换一份：只认我们点名要的那一次回应。播放器自己发的字幕请求
+     * ——预加载、失败重试、上一个视频的迟到响应——都不带这个编号，
+     * 于是绝不会被误判成换轨、白白清空译文再重翻一遍。 */
+    const switching = st.segments.length > 0;
+    if (switching) {
+      if (sig && sig === st.trackSig) return;   // 已经在用这条轨了，别白重来一轮
+      if (!(data.reqId && data.reqId === st.wantReq)) return;
+      /* 回来的语言得跟点名要的对得上。inject.js 那边已经不会拿别的轨来顶了，
+       * 这里再核一道：宁可维持现状，也别把用户选的德语翻成日语。
+       * 地区变体不计较（pt-BR 收到 pt 算数），只看主语言。 */
+      if (st.wantLang && !sameLang(sigLang(sig), st.wantLang)) { st.wantReq = 0; return; }
+    }
+
     const cues = body.trim().startsWith('<') ? parseXml(body) : (parseJson3(body) || parseXml(body));
     if (!cues || !cues.length) return;
+
+    if (switching) {
+      st.epoch++;              // 在途请求带的是旧轨的 segment id，必须作废
+      st.trans = new Map();
+      st.dropped = new Set();
+      st.curIdx = -1;
+      st.error = '';
+    }
+    st.trackSig = sig;
+    /* 只有「我们点名要的那一份」才算把这次点名了结。先顶上来的那条（播放器自己拉的）
+     * 不能把请求勾销，否则我们要的那条随后到达时会被自己的闸门挡在门外。 */
+    if (data.reqId && data.reqId === st.wantReq) { st.wantReq = 0; st.wantLang = ''; }
+
+    // 原声语言以实际拿到的这条轨为准，提示词里才不会写错源语言
+    const lang = sigLang(sig);
+    if (lang) {
+      st.sourceLang = lang;
+      st.needsTranslation = !sameLang(lang, targetCode());
+    }
 
     st.rawCues = cues;                       // 留着，改字幕长度档位时不用重新拉字幕
     st.segments = buildSegments(cues);
     if (!st.segments.length) { st.status = 'nosub'; renderStatusChip(); return; }
     st.batches = makeBatches(st.segments);
+
+    /* 用户挑的这条轨本来就是目标语言（比如直接选了中文字幕）：再翻一遍既费钱、
+     * 显示出来还是两行一样的字。让位给 YouTube 自己的字幕就好。 */
+    if (switching && st.active && !st.needsTranslation) { stop(false); return; }
 
     const epoch = st.epoch;
     await loadCache(st.videoId);
@@ -1156,7 +1333,15 @@
       }
     } else if (m.type === 'track') {
       onTrackBody(m.data);
+    } else if (m.type === 'captiontrack') {
+      onCaptionTrack(m.data);
     } else if (m.type === 'trackfail') {
+      // 点名要的那条轨没找到：维持现在这条，别退回去翻成另一种语言
+      if (m.data && m.data.reqId && m.data.reqId === st.wantReq) {
+        st.wantReq = 0;
+        st.wantLang = '';
+        if (st.segments.length) return;
+      }
       if (st.active && !st.fallbackTried) {
         st.fallbackTried = true;
         post2page('enableNative', { lang: st.sourceLang || '' });
@@ -1187,6 +1372,10 @@
         videoId: st.videoId,
         title: st.title,
         sourceLang: st.sourceLang,
+        audioLang: st.audioLang,
+        trackLang: sigLang(st.trackSig),
+        trackKind: String(st.trackSig).split('|')[1] || '',
+        trackList: st.tracks.map((t) => ({ lang: t.languageCode, kind: t.kind })),
         needsTranslation: st.needsTranslation,
         active: st.active,
         status: st.status,
@@ -1200,6 +1389,7 @@
     if (msg.type === 'toggle') { toggle(); sendResponse({ ok: true, active: st.active }); return true; }
     if (msg.type === 'setActive') { msg.value ? start() : stop(true); sendResponse({ ok: true }); return true; }
     if (msg.type === 'retry') { retryErrors(); sendResponse({ ok: true }); return true; }
+    if (msg.type === 'purgeCache') { purgeCache().then(() => sendResponse({ ok: true })); return true; }
     if (msg.type === 'settingsChanged') {
       chrome.storage.local.get('settings')
         .then((got) => applySettings(got.settings))
@@ -1227,6 +1417,10 @@
   async function applySettings(raw) {
     const old = S;
     S = Object.assign({}, DEFAULTS, raw || {});
+    const wasReady = settingsReady;
+    settingsReady = true;
+    // boot 还没读完就先收到了设置变更：挂起的语言/自动开启判定现在就能做了
+    if (!wasReady && (pendingEval || st.videoId)) { pendingEval = false; evaluateTracks(); }
 
     applyStyleVars();
     document.documentElement.classList.toggle('ytst-hide-native', st.active && !!S.hideNative);
@@ -1275,13 +1469,47 @@
 
   window.addEventListener('beforeunload', saveCacheNow);
 
+  // 测试用出口：只有测试桩会预先把这个键设成对象，页面里永远是 undefined
+  if (window.__YTST_TEST__) Object.assign(window.__YTST_TEST__, { buildSegments, parseJson3, findIndex, st });
+
+  /* 一直问到问出来为止。
+   *
+   * 以前是「boot 时探一次 + 每次 SPA 导航探一次」，inject.js 那边也只轮询 12×600ms。
+   * 冷刷新时播放器如果 7 秒内没就绪（网速慢、前贴片广告、storage 变大拖慢了启动），
+   * 这两条路就一起走完了，之后再没有任何人去问，页面就永久停在「没有字幕」——
+   * 只能靠站内跳到另一个视频、或者重开浏览器才恢复。 */
+  function keepProbing() {
+    let n = 0;
+    const iv = setInterval(() => {
+      if (st.videoId && st.tracks.length) { clearInterval(iv); return; }
+      post2page('probe');
+      // 前 30 秒每秒问一次，之后降到 5 秒一次，一直陪到底
+      if (++n === 30) { clearInterval(iv); setInterval(() => { if (!st.videoId || !st.tracks.length) post2page('probe'); }, 5000); }
+    }, 1000);
+  }
+
   (async function boot() {
-    await loadSettings();
+    /* 先注入。inject.js 要赶在播放器自己去拉字幕之前把 fetch/XHR 劫持装上，
+     * 而 loadSettings 读的是 chrome.storage —— 缓存攒多了它可能要几百毫秒甚至更久，
+     * 排在注入前面等于把劫持推迟到播放器之后，首份字幕就截不到了。 */
     inject();
     requestAnimationFrame(loop);
     setInterval(observeUi, 1000);
-    setInterval(() => { if (st.active) schedule(); }, 2000);
+    setInterval(() => {
+      if (!st.active) return;
+      schedule();
+      // 开着却一句都没拿到：字幕轨也许刚到、也许上次是偶发失败，再要一次
+      if (!st.segments.length && st.tracks.length) requestTrack();
+    }, 2000);
     document.addEventListener('yt-navigate-finish', () => setTimeout(() => post2page('probe'), 300));
     setTimeout(() => post2page('probe'), 800);
+    keepProbing();
+    await loadSettings();
+    settingsReady = true;
+    applyStyleVars();
+    if (!S.enabled) { stop(false); return; }
+    // 挂起期间来过播放器信息：现在按真正的设置重判一次语言和自动开启
+    if (pendingEval || st.videoId) { pendingEval = false; evaluateTracks(); }
+    if (st.active) { schedule(); render(); }
   })();
 })();
