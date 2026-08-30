@@ -13,7 +13,7 @@
    * ------------------------------------------------------------------ */
   const DEFAULTS = {
     enabled: true, autoStart: true,
-    baseUrl: 'https://api.openai.com/v1', apiKey: '', model: 'gpt-5.6-luna', targetLang: '简体中文',
+    baseUrl: 'https://api.openai.com/v1', apiKey: '', model: 'gpt-5.6-luna', targetLang: 'auto',
     reasoning: 'none', reasoningStyle: 'effort_none',
     layout: 'both', fontFamily: 'serif', fontSize: 24, autoScale: true, origScale: 0.8,
     maxWidth: 88, bgOpacity: 0.55, hideNative: true, posX: null, posY: null,
@@ -28,7 +28,8 @@
     '简体中文': 'zh-CN', '繁體中文': 'zh-TW', '中文': 'zh', 'English': 'en', '英文': 'en',
     '英语': 'en', '日本語': 'ja', '日文': 'ja', '日语': 'ja', '한국어': 'ko', '韩语': 'ko',
     'Français': 'fr', 'Deutsch': 'de', 'Español': 'es', 'Русский': 'ru',
-    'Português': 'pt', 'Italiano': 'it'
+    'Português': 'pt', 'Italiano': 'it', 'ไทย': 'th', 'Tiếng Việt': 'vi',
+    'العربية': 'ar', 'हिन्दी': 'hi'
   };
 
   function targetCode() {
@@ -732,10 +733,12 @@
     await patchSettings({ maxWidth: pct });
   }
 
+  /* 只把改动合进已存的那份，不把 DEFAULTS 一起写进去 ——
+   * 否则用户从没碰过的默认值会被固化成显式设置，以后版本改默认值也推不到老用户。 */
   async function patchSettings(patch) {
     try {
       const got = await chrome.storage.local.get('settings');
-      const next = Object.assign({}, DEFAULTS, got.settings || {}, patch);
+      const next = Object.assign({}, got.settings || {}, patch);
       await chrome.storage.local.set({ settings: next });
     } catch (_) {}
   }
@@ -931,9 +934,11 @@
   function toggle() { st.active ? stop(true) : start(); }
 
   async function start() {
+    // 只回写这一个字段：直接写整个 S 会把本文件的 DEFAULTS 固化进存储，
+    // 把用户从没选过的默认值（尤其 targetLang）变成显式设置
     if (!S.enabled) {
       S.enabled = true;
-      try { await chrome.storage.local.set({ settings: S }); } catch (_) {}
+      await patchSettings({ enabled: true });
     }
     st.active = true;
     st.userOff = false;
