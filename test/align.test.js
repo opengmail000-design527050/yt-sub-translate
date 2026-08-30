@@ -213,13 +213,23 @@ const mergeAt = (k) => (items) => {
     ok('如实报失败', r.ok === false);
   }
 
-  console.log('\n[13] 500：仍然该重试，这类是暂时的');
-  {
+  console.log('\n[13] 暂时性的照重试：500 / 408 / 425 / 429');
+  for (const st of [500, 408, 425, 429]) {
     let n = 0;
-    const { api, calls } = load(honest, () => (++n === 1 ? { status: 500, body: 'oops' } : null));
+    const { api, calls } = load(honest, () => (++n === 1 ? { status: st, body: 'oops' } : null));
     const r = await api.translateBatch({ lines: mk(6) });
-    ok('重试之后成功了', r.ok === true, JSON.stringify(r.error || ''));
-    ok('一共两次请求', calls.length === 2, '请求数=' + calls.length);
+    ok('HTTP ' + st + ' 重试之后成功了', r.ok === true, JSON.stringify(r.error || ''));
+    ok('HTTP ' + st + ' 一共两次请求', calls.length === 2, '请求数=' + calls.length);
+  }
+
+  console.log('\n[13b] 配置/请求错了就认输：400 / 401 / 403 / 404 / 422');
+  for (const st of [400, 401, 403, 404, 422]) {
+    let n = 0;
+    // 第二次会成功 —— 要是它重试了，这里就会「意外通过」，正好暴露出来
+    const { api, calls } = load(honest, () => (++n === 1 ? { status: st, body: 'nope' } : null));
+    const r = await api.translateBatch({ lines: mk(6) });
+    ok('HTTP ' + st + ' 只发一次请求', calls.length === 1, '请求数=' + calls.length);
+    ok('HTTP ' + st + ' 如实报失败', r.ok === false && new RegExp(String(st)).test(r.error || ''), r.error);
   }
 
   console.log(`\n结果：${pass} 通过 / ${fail} 失败`);

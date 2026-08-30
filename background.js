@@ -334,11 +334,17 @@ async function postJson(url, key, body, timeoutMs, retries) {
           detail = (j.error && (j.error.message || j.error.code)) || detail;
         } catch (_) {}
         const err = new Error(`HTTP ${res.status}: ${detail}`);
-        if (res.status === 429 || res.status >= 500) { lastErr = err; await sleep(1200 * (attempt + 1)); continue; }
-        /* 400/401/403 这类是配置错了（key 不对、模型名不对、余额没了），
-         * 重发一模一样的请求只会得到一模一样的拒绝。标记成别重试 ——
-         * 下面那个 catch 会把 try 里 throw 出来的错一起接住，不打标记的话
-         * 它照样会睡一秒再发一遍。 */
+        /* 暂时性的才重发：
+         *   408 请求超时、425 太早、429 限流，以及所有 5xx。
+         * 其余（400 请求不合法、401 key 不对、403 没权限、404 模型名不对、
+         * 422 参数不合法……）都是配置或请求内容错了，重发一模一样的请求
+         * 只会得到一模一样的拒绝，白等一秒还多烧一次配额。
+         *
+         * 不重试的要打上 noRetry —— 这个 throw 在 try 块里，会被下面那个 catch
+         * 一并接住，不打标记的话它照样睡一秒再发一遍。 */
+        const transient = res.status === 408 || res.status === 425
+                       || res.status === 429 || res.status >= 500;
+        if (transient) { lastErr = err; await sleep(1200 * (attempt + 1)); continue; }
         err.noRetry = true;
         throw err;
       }
