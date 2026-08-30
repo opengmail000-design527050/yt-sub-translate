@@ -3,10 +3,13 @@
 const fs = require('fs'), vm = require('vm');
 
 let pass = 0, fail = 0;
-const ok = (name, cond) => { cond ? pass++ : fail++; console.log(`  ${cond ? 'PASS' : 'FAIL'} ${name}`); };
+const ok = (name, cond, extra) => {
+  cond ? pass++ : fail++;
+  console.log(`  ${cond ? 'PASS' : 'FAIL'} ${name}` + (!cond && extra ? '  :: ' + extra : ''));
+};
 
 /* ---- 把 background.js 装进沙箱 ---- */
-function load(reply) {
+function load(reply, http) {
   const src = fs.readFileSync(__dirname + '/../background.js', 'utf8')
     .replace(/^import .*$/m, '')
     + '\nglobalThis.__t = { translateBatch, edgeGap };';
@@ -36,6 +39,12 @@ function load(reply) {
       const items = user.split('\n').filter((l) => /^\d+\|/.test(l));
       const isRepair = /上一次回复漏掉/.test(user);
       calls.push({ n: items.length, isRepair, lines: items, user });
+      // http 桩：模拟 401 / 网络中断这类跟译文格式无关的失败
+      if (http) {
+        const h = http(calls.length);
+        if (h && h.throw) throw new Error(h.throw);
+        if (h) return { ok: false, status: h.status, text: async () => h.body || '' };
+      }
       const content = reply(items, isRepair, calls.length);
       return { ok: true, status: 200, text: async () => JSON.stringify({
         choices: [{ message: { content } }], usage: { prompt_tokens: 1, completion_tokens: 1 }
@@ -167,6 +176,50 @@ const mergeAt = (k) => (items) => {
     const r = await api.translateBatch({ lines: mk(6) });
     ok('六行齐了（靠拆块重来，不是靠猜）', Object.keys(r.map || {}).length === 6);
     ok('每一行都是自己那句', Object.entries(r.map || {}).every(([id, t]) => t === '译L' + (Number(id) - 99)));
+  }
+
+  console.log('\n[10] 中间缺号 + 末尾一句没编号的说明：不许拿它去补洞');
+  {
+    /* 复核里点名的场景：模型把第 2、3 句并成一句（缺号 3 夹在中间，不碰两端），
+     * 末尾又补一句没编号的说明。旧代码「剩余行数正好等于缺失数」就顺序填，
+     * 于是那句说明被当成第 3 句的译文摆上屏幕，还整批写进缓存。 */
+    const { api } = load((items, isRepair, nth) => {
+      if (isRepair) return honest(items);
+      if (nth > 1) return honest(items);
+      const out = ['1|译L1', '2|译L2 L3', '4|译L4', '5|译L5', '6|译L6', '（以上共 5 行）'];
+      return out.join('\n');
+    });
+    const r = await api.translateBatch({ lines: mk(6) });
+    const all = Object.values(r.map || {});
+    ok('那句说明没被当成任何一句的译文', all.every((t) => !/以上共/.test(t)));
+    ok('第 3 句要么补翻回来、要么只显示原文', !r.map || !/以上共/.test(r.map['102'] || ''));
+    ok('缺的那句走的是严格补翻', (r.repaired || 0) + (r.dropped || []).length > 0);
+  }
+
+  console.log('\n[11] HTTP 401：认输，别重试也别严格重问');
+  {
+    const { api, calls } = load(honest, () => ({ status: 401, body: '{"error":{"message":"bad key"}}' }));
+    const r = await api.translateBatch({ lines: mk(6) });
+    ok('只发了一次请求', calls.length === 1, '请求数=' + calls.length);
+    ok('如实报失败', r.ok === false);
+    ok('错误里带得上 401', /401/.test(r.error || ''), r.error);
+  }
+
+  console.log('\n[12] 网络中断：postJson 自己重试一次就够，不该再叠一轮严格重问');
+  {
+    const { api, calls } = load(honest, () => ({ throw: 'network down' }));
+    const r = await api.translateBatch({ lines: mk(6) });
+    ok('总共两次（postJson 的一次重试），不是四次', calls.length === 2, '请求数=' + calls.length);
+    ok('如实报失败', r.ok === false);
+  }
+
+  console.log('\n[13] 500：仍然该重试，这类是暂时的');
+  {
+    let n = 0;
+    const { api, calls } = load(honest, () => (++n === 1 ? { status: 500, body: 'oops' } : null));
+    const r = await api.translateBatch({ lines: mk(6) });
+    ok('重试之后成功了', r.ok === true, JSON.stringify(r.error || ''));
+    ok('一共两次请求', calls.length === 2, '请求数=' + calls.length);
   }
 
   console.log(`\n结果：${pass} 通过 / ${fail} 失败`);

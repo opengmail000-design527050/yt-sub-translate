@@ -166,11 +166,13 @@ async function translateChunk(ctx, items, depth, prevText) {
   bumpUsage(ctx.totals, r.usage);
   let out = r.error ? new Map() : collect(r.map);
 
-  /* 一行都没认出来。多半是模型压根没按 "<n>|译文" 的格式回 ——
+  /* 一行都没认出来，而且这次请求本身是成功的 —— 那就是模型没按 "<n>|译文" 回。
    * 编号一丢就没有任何办法校验对齐，绝不能拿「行数正好相等」当依据照单全收
-   * （见 parseLines 里那段注释）。重问一次，把格式要求说死。
-   * 只有本来就已经失败的情况才会走到这，正常路径不会多花钱。 */
-  if (!out.size) {
+   * （见 parseLines 里那段注释），只能重问一次、把格式要求说死。
+   *
+   * 必须挡住 r.error：401、网络中断、超时这些跟格式毫无关系，重问一次也还是那个
+   * 结果，只会把等待和计费翻倍 —— 90 秒超时的批会变成 3 分钟起。 */
+  if (!r.error && !out.size) {
     const again = await askModel(ctx.s, numbered, prevText, 'strict', ctx.sourceLang);
     bumpUsage(ctx.totals, again.usage);
     if (!again.error) { r = again; out = collect(again.map); }
@@ -279,7 +281,7 @@ async function askModel(s, items, context, mode, sourceLang) {
   return { map: parseLines(content, items), usage: data.usage || null, error: null };
 }
 
-/** 把 "<n>|译文" 解析成 { n: 译文 }；模型不带编号时按顺序兜底对齐。 */
+/** 把 "<n>|译文" 解析成 { n: 译文 }。认不出编号的行一律丢掉，绝不猜它属于哪一句。 */
 function parseLines(content, items) {
   const map = {};
   const cleaned = content.replace(/\r/g, '').split('\n')
@@ -287,32 +289,23 @@ function parseLines(content, items) {
     .filter((x) => x && !/^```/.test(x));
 
   const valid = new Set(items.map((it) => String(it.n)));
-  const leftovers = [];
   for (const line of cleaned) {
     const m = line.match(/^(\d+)\s*[|｜:：]\s*(.*)$/);
-    if (m && valid.has(m[1])) {
-      const t = m[2].trim();
-      if (t) map[m[1]] = t;
-    } else {
-      leftovers.push(line.replace(/^\d+\s*[|｜:：]\s*/, '').trim());
-    }
+    if (!m || !valid.has(m[1])) continue;   // 没编号、或编号超出这一块的范围
+    const t = m[2].trim();
+    if (t) map[m[1]] = t;
   }
 
-  /* 这里以前还有一条「模型完全没带编号，但行数刚好对得上就按顺序对齐」的兜底。
-   * 它已经删掉了 —— 那条路把唯一能校验对齐的信息（编号）扔了，
-   * 只剩「行数相等」这一个条件，而行数太容易凑巧相等：
-   * 模型把第 2、3 句并成一句（少一行），末尾又客气地补一句「以上共 3 行」（多一行），
-   * 行数原样对上，于是从第 2 句起整体前移的译文被照单全收，还顺手写进了缓存。
-   * 拿不准就别猜：交给上层当「这次没给出可用译文」处理，重问一次比错一整批便宜。 */
-
-  /* 部分缺失，且剩余行数正好等于缺失数：按顺序补上。
-   * 但缺口碰到首行或末行时不能填 —— 那是编号整体平移的指纹（见 edgeGap），
-   * 顺序补齐等于替模型把窟窿糊上，上层再也看不出这一批已经整体错位了。
-   * 只有窟窿夹在中间时，前后编号都对得上，按顺序填才是安全的。 */
-  const missing = items.filter((it) => !map[String(it.n)]);
-  if (missing.length && !edgeGap(missing, items.length) && leftovers.length === missing.length) {
-    missing.forEach((it, i) => { if (leftovers[i]) map[String(it.n)] = leftovers[i]; });
-  }
+  /* 这里以前有两条「按顺序拿没编号的行去补洞」的兜底，都删了。
+   *
+   * 一条是「模型完全没带编号，但行数刚好对得上就按顺序对齐」，另一条是
+   * 「剩余行数正好等于缺失数就顺序填」。两条都把唯一能校验对齐的信息（编号）
+   * 扔掉，只靠行数相等来猜，而行数太容易凑巧：模型把第 2、3 句并成一句（少一行），
+   * 末尾又客气地补一句「以上共 N 行」（多一行），行数原样对上 —— 于是第 2 句
+   * 装着两句话、第 3 句装着那句客套话，整批还照样写进缓存。
+   *
+   * 认不出编号就当没给。缺哪几行由上层去严格补翻或拆块重来，
+   * 多花一次请求，也好过把一句不知道属于谁的文字摆到屏幕上。 */
   return map;
 }
 
@@ -342,12 +335,18 @@ async function postJson(url, key, body, timeoutMs, retries) {
         } catch (_) {}
         const err = new Error(`HTTP ${res.status}: ${detail}`);
         if (res.status === 429 || res.status >= 500) { lastErr = err; await sleep(1200 * (attempt + 1)); continue; }
+        /* 400/401/403 这类是配置错了（key 不对、模型名不对、余额没了），
+         * 重发一模一样的请求只会得到一模一样的拒绝。标记成别重试 ——
+         * 下面那个 catch 会把 try 里 throw 出来的错一起接住，不打标记的话
+         * 它照样会睡一秒再发一遍。 */
+        err.noRetry = true;
         throw err;
       }
       return JSON.parse(text);
     } catch (e) {
       clearTimeout(timer);
       lastErr = e;
+      if (e && e.noRetry) throw e;
       if (e && e.name === 'AbortError') { if (attempt < retries) continue; throw new Error('请求超时'); }
       if (attempt >= retries) throw e;
       await sleep(1000 * (attempt + 1));
