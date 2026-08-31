@@ -236,6 +236,55 @@ console.log('\n[7] 有标点的轨不发后文');
   ok('没标点的轨照发后文', calls[0].user.includes('so it scales linearly'));
   ok('只有后文时不该冒出前文块', !calls[0].user.includes('[前文'));
 }
+console.log('\n[9] 没有译文的前文，只发给无标点的轨');
+{
+  /* 带前文的本意是「让模型看见自己上一批把 agent 译成了什么」，靠的是译文。
+     没有译文时这个理由不成立 —— 对有标点的轨，那就只是一段长得跟待翻行一模一样
+     的英文旁白，白花 token 还多一次被误当成输入的机会。
+     无标点的轨另当别论：批首那句是按停顿切的，很可能是半截话，需要知道它从哪儿
+     来（跟后文块同一个道理），所以照发。 */
+  const bare = [{ text: 'and then the whole thing just fell over', tr: '' }];
+
+  {
+    const { api, calls } = load({}, echo);
+    await api.translateBatch({ lines: mk(3), prev: bare, sourceLang: 'en', noPunct: false });
+    const u = calls[0].user;
+    ok('有标点的轨：不发没译文的前文', !u.includes('and then the whole thing just fell over'), u);
+    ok('前文块整个不出现', !u.includes('[前文'), u);
+    // 没有任何参考块时，那句「以下是需要翻译的 N 行」也就没必要发了
+    ok('连抬头都省掉了', !u.includes('[以下是需要翻译的'), u);
+  }
+  {
+    const { api, calls } = load({}, echo);
+    await api.translateBatch({ lines: mk(3), prev: bare, sourceLang: 'en', noPunct: true });
+    const u = calls[0].user;
+    ok('无标点的轨：照发', u.includes('and then the whole thing just fell over'), u);
+    ok('前文块出现了', u.includes('[前文'), u);
+  }
+  {
+    // 有译文的前文，两种轨都该发 —— 那才是带前文真正想要的东西
+    const withTr = [{ text: 'we cached the keys', tr: '我们把 key 缓存了' }];
+    for (const noPunct of [false, true]) {
+      const { api, calls } = load({}, echo);
+      await api.translateBatch({ lines: mk(3), prev: withTr, sourceLang: 'en', noPunct });
+      ok('带译文的前文照发（noPunct=' + noPunct + '）',
+         calls[0].user.includes('we cached the keys → 我们把 key 缓存了'), calls[0].user);
+    }
+  }
+  {
+    // 混着来：只留下带译文的那些，没译文的被滤掉
+    const { api, calls } = load({}, echo);
+    await api.translateBatch({
+      lines: mk(3),
+      prev: [{ text: 'translated line here', tr: '翻过的那句' }, { text: 'untranslated line here', tr: '' }],
+      sourceLang: 'en', noPunct: false
+    });
+    const u = calls[0].user;
+    ok('带译文的留下', u.includes('translated line here → 翻过的那句'), u);
+    ok('没译文的滤掉', !u.includes('untranslated line here'), u);
+  }
+}
+
 console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
 process.exit(fail ? 1 : 0);
 })();

@@ -132,6 +132,35 @@ function run(settings, usage) {
   ok('有样例译文', /智能/.test(res.sample), res.sample);
   ok('usage 原样带回', res.usage && res.usage.prompt_tokens === 120, JSON.stringify(res.usage));
 
+  console.log('\n[9] 前缀缓存命中：各家位置不同，取不到必须报 null');
+  {
+    /* 跟推理 token 完全同一个道理：「服务商没回报」和「回报了 0」是两件事。
+       混成 0 的话，就再也分不清「这个接口不告诉我」和「确实一次都没命中」，
+       而要不要为缓存去调整请求结构，全看这个区别。 */
+    ({ res } = await run({}, { prompt_tokens: 900, completion_tokens: 30,
+                               prompt_tokens_details: { cached_tokens: 768 } }));
+    ok('OpenAI 写法：prompt_tokens_details.cached_tokens', res.cached === 768, String(res.cached));
+
+    ({ res } = await run({}, { input_tokens: 900, output_tokens: 30,
+                               input_tokens_details: { cached_tokens: 512 } }));
+    ok('input_tokens_details 写法', res.cached === 512, String(res.cached));
+
+    ({ res } = await run({}, { prompt_tokens: 900, cache_read_input_tokens: 640 }));
+    ok('cache_read_input_tokens 写法', res.cached === 640, String(res.cached));
+
+    ({ res } = await run({}, { prompt_tokens: 900, prompt_cache_hit_tokens: 256 }));
+    ok('prompt_cache_hit_tokens 写法', res.cached === 256, String(res.cached));
+
+    ({ res } = await run({}, { prompt_tokens: 900, completion_tokens: 30 }));
+    ok('没回报时是 null，不是 0', res.cached === null, JSON.stringify(res.cached));
+
+    ({ res } = await run({}, { prompt_tokens: 900, prompt_tokens_details: { cached_tokens: 0 } }));
+    ok('回报了 0 就是 0，不能跟「没回报」混为一谈', res.cached === 0, JSON.stringify(res.cached));
+
+    ({ res } = await run({}, null));
+    ok('整个 usage 都没有时也是 null', res.cached === null, JSON.stringify(res.cached));
+  }
+
   console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
   process.exit(fail ? 1 : 0);
 })();

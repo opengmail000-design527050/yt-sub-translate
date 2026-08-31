@@ -357,6 +357,10 @@ function paintTestDetail(res) {
   const usedTxt = (used === null || used === undefined) ? '该服务商没有回报' : `${used} token`;
   rows.push(row('实际推理', used > 0 ? `<span class="warn">${usedTxt}</span>` : usedTxt));
 
+  // 前缀缓存同理：拿不到就说拿不到，别拿 0 冒充「确实没命中」
+  const cch = res.cached;
+  rows.push(row('前缀缓存', (cch === null || cch === undefined) ? '该服务商没有回报' : `命中 ${cch} token`));
+
   const pt = Number(u.prompt_tokens || u.input_tokens || 0);
   const ct = Number(u.completion_tokens || u.output_tokens || 0);
   if (pt || ct) rows.push(row('本次用量', `输入 ${pt} · 输出 ${ct}`));
@@ -437,6 +441,19 @@ async function refreshStats() {
     if (s.repaired) bits.push(`补翻 ${s.repaired} 行`);
     if (s.dropped) bits.push(`放弃 ${s.dropped} 行`);
     parts.push(bits.join('，'));
+  }
+
+  /* 前缀缓存命中率。OpenAI 兼容接口通常要前缀 ≥1024 token 才自动缓存，而这里一批
+     输入才 900~1400，很可能一次都进不去。是不是这样，看这行数字才知道 ——
+     在有数之前，不值得为了凑够 1024 去给请求垫字（垫到 1024 拿五折等于 512，
+     比现在 900 不缓存还贵）。 */
+  if (s && s.requests) {
+    if (!s.cachedReports) {
+      parts.push('前缀缓存：服务商没回报');
+    } else {
+      const pct = s.prompt ? Math.round((s.cached || 0) / s.prompt * 100) : 0;
+      parts.push(`前缀缓存命中 ${fmt(s.cached || 0)}（占输入 ${pct}%）`);
+    }
   }
 
   let bytes = 0;

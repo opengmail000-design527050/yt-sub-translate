@@ -131,7 +131,7 @@ async function translateBatch(payload) {
     sourceLang: payload.sourceLang,
     noPunct: !!payload.noPunct,
     title: payload.title || '',
-    totals: { prompt_tokens: 0, completion_tokens: 0 },
+    totals: { prompt_tokens: 0, completion_tokens: 0, cached_tokens: 0, cached_reports: 0 },
     error: '',
     repaired: 0,
     split: 0        // 因为错位而对半重来的次数，前端拿它判断批次是不是给大了
@@ -277,6 +277,27 @@ function bumpUsage(totals, u) {
   if (!u) return;
   totals.prompt_tokens += Number(u.prompt_tokens || u.input_tokens || 0);
   totals.completion_tokens += Number(u.completion_tokens || u.output_tokens || 0);
+  /* 前缀缓存命中单独记，而且要分清「服务商压根没回报」和「回报了 0」：前者说明
+   * 这个接口不告诉你，后者才说明真的没命中。所以另记一个「有几次回报过」的计数，
+   * 一次都没有时设置页就直说没回报，不会拿 0 冒充结论。 */
+  const c = cachedTokens(u);
+  if (c !== null) {
+    totals.cached_tokens += c;
+    totals.cached_reports += 1;
+  }
+}
+
+/** 这次请求里有多少输入 token 是命中前缀缓存的。各家放的位置不一样，取不到返回
+ *  null（不是 0）。OpenAI 兼容接口通常要前缀 ≥1024 token 才自动缓存，而这里一批
+ *  输入才 900~1400，很可能一次都进不去 —— 但那是推测，得有数才谈得上要不要为它
+ *  调整请求结构。 */
+function cachedTokens(u) {
+  if (!u) return null;
+  const d = u.prompt_tokens_details || u.input_tokens_details || {};
+  const n = d.cached_tokens !== undefined ? d.cached_tokens
+          : u.cache_read_input_tokens !== undefined ? u.cache_read_input_tokens
+          : u.prompt_cache_hit_tokens;
+  return typeof n === 'number' ? n : null;
 }
 
 /* 参考上下文的预算，按「字符」算，中文折两倍（一个汉字约合一个 token，一个英文
@@ -314,6 +335,16 @@ function refBlocks(ref, noPunct) {
   for (let i = src.length - 1; i >= 0; i--) {
     const x = src[i];
     if (!x || !x.text) continue;
+    /* 没有译文的前文，只对无标点的轨才有意义 —— 那时批首这一句是按停顿切出来的，
+     * 很可能是半截话，需要知道它从哪儿来（跟后文块完全是同一个道理）。有标点的轨
+     * 批首本来就是句子开头，这种行提供不了任何东西，只是一段长得跟待翻行一模一样
+     * 的英文旁白，白花 token 还多给模型一次把它当成输入的机会。
+     *
+     * 这条分支在默认配置下几乎总会命中：并发是 3，批次成波发出，某一批的前几行
+     * 正在隔壁批次里翻着，所以实测「前文带译文」的比例是 0%（并发压到 1 才是
+     * 100%）。也就是说带前文的本意 —— 让模型看见自己上一批把 agent 译成了什么 ——
+     * 在默认设置下从来没有兑现过，送出去的一直是没翻过的原文。 */
+    if (!x.tr && !noPunct) continue;
     const line = x.tr ? `${x.text} → ${x.tr}` : x.text;
     // 至少留一行：头一行就超预算也照给，否则碰上长句整块前文会凭空消失
     if (prev.length && w + refWidth(line) > REF_PREV_BUDGET) break;
@@ -565,6 +596,8 @@ function addUsage(usage, align) {
       st.requests = (st.requests || 0) + 1;
       st.prompt = (st.prompt || 0) + Number(usage.prompt_tokens || usage.input_tokens || 0);
       st.completion = (st.completion || 0) + Number(usage.completion_tokens || usage.output_tokens || 0);
+      st.cached = (st.cached || 0) + Number(usage.cached_tokens || 0);
+      st.cachedReports = (st.cachedReports || 0) + Number(usage.cached_reports || 0);
     }
     // 老用户的 stats 里没有这几个键，一律按 0 起算
     if (align) for (const k of ALIGN_KEYS) st[k] = (st[k] || 0) + Number(align[k] || 0);
@@ -610,7 +643,9 @@ async function testApi(override) {
       style: s.reasoningStyle || 'effort',
       sent: reasoningFields(body),
       used: reasoningTokens(data.usage)
-    }
+    },
+    // 同样地：取不到就是 null，不能写成 0
+    cached: cachedTokens(data.usage)
   };
 }
 

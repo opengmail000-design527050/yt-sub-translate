@@ -162,7 +162,12 @@ async function feed(videoId, n) {
   check('再干净三批就升到 40 行（20 × 2）', s1.includes(40), JSON.stringify(s1));
   check('40 行封顶，不会无限往上涨', s1.every((n) => n <= 40), JSON.stringify(s1));
 
-  console.log('\n[2] 后端报错位：立刻回落，而且不再试那一档');
+  console.log('\n[2] 单次错位：立刻回落，但不判死刑');
+  /* 原来是「一次错位就永久封顶」。可封顶的代价极不对称：档位每个视频都从 0 重新
+     起步，tier 已经是 0 时再错一次，整个视频就锁死在 20 句/批 —— 两小时的访谈会
+     从 33 次请求涨到 62 次，光固定开销就多烧约一万五千 token。而模型偶尔把相邻
+     两句并成一句本来就是常态，一次远不足以断定这一档不行。
+     现在回落照旧是一次就回落（便宜且可逆），永久封顶要连着两次。 */
   sent.length = 0;
   let nth = 0;
   runtimeReply = async (m) => {
@@ -175,9 +180,40 @@ async function feed(videoId, n) {
 
   const s2 = sizes();
   check('出事的那一批确实是 30 行', s2[3] === 30, JSON.stringify(s2));
-  check('出事之后回落到 20 行', s2[4] === 20, JSON.stringify(s2));
+  check('出事之后立刻回落到 20 行', s2[4] === 20, JSON.stringify(s2));
+  check('偶发一次不封顶，后面还能再升上去', s2.slice(5).some((n) => n > 20), JSON.stringify(s2));
+
+  console.log('\n[2b] 连着两批错位：这才认定这一档不行，永久封顶');
+  sent.length = 0;
+  let nth2 = 0;
+  runtimeReply = async (m) => {
+    nth2++;
+    const r = await cleanReply(m);
+    // 第 4 批是刚升到 30 行的那一批；紧接着的第 5 批（已回落到 20）再错一次
+    if (nth2 === 4 || nth2 === 5) r.split = 1;
+    return r;
+  };
+  await feed('B2b', 500);
+
+  const s2b = sizes();
+  check('第 4 批是 30 行', s2b[3] === 30, JSON.stringify(s2b));
+  check('第 5 批已经回落到 20 行', s2b[4] === 20, JSON.stringify(s2b));
   // 末尾那一批是整条字幕剩下的零头，天然比档位小，所以是 <= 而不是 ==
-  check('从此再没升上去过', s2.slice(4).every((n) => n <= 20), JSON.stringify(s2));
+  check('连错两次之后从此再没升上去过', s2b.slice(5).every((n) => n <= 20), JSON.stringify(s2b));
+
+  console.log('\n[2c] 中间隔了干净批次，两次错位不该累加');
+  sent.length = 0;
+  let nth3b = 0;
+  runtimeReply = async (m) => {
+    nth3b++;
+    const r = await cleanReply(m);
+    if (nth3b === 4 || nth3b === 9) r.split = 1;   // 两次之间隔着好几批干净的
+    return r;
+  };
+  await feed('B2c', 500);
+
+  const s2c = sizes();
+  check('两次都是偶发，最终仍能升上去', s2c.slice(10).some((n) => n > 20), JSON.stringify(s2c));
 
   console.log('\n[3] 网络错误不该被当成「批次太大」');
   sent.length = 0;

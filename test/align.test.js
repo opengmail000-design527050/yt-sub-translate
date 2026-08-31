@@ -9,7 +9,7 @@ const ok = (name, cond, extra) => {
 };
 
 /* ---- 把 background.js 装进沙箱 ---- */
-function load(reply, http, noUsage) {
+function load(reply, http, noUsage, usageOverride) {
   const src = fs.readFileSync(__dirname + '/../background.js', 'utf8')
     .replace(/^import .*$/m, '')
     + '\nglobalThis.__t = { translateBatch, edgeGap };';
@@ -48,7 +48,7 @@ function load(reply, http, noUsage) {
       const content = reply(items, isRepair, calls.length);
       return { ok: true, status: 200, text: async () => JSON.stringify({
         choices: [{ message: { content } }],
-        usage: noUsage ? undefined : { prompt_tokens: 1, completion_tokens: 1 }
+        usage: noUsage ? undefined : (usageOverride || { prompt_tokens: 1, completion_tokens: 1 })
       }) };
     }
   };
@@ -334,6 +334,38 @@ const mergeAt = (k) => (items) => {
     const s = store.stats;
     ok('老 stats 升级后从 0 起算，不是 NaN', s.batches === 2, JSON.stringify(s));
     ok('原有的 token 计数继续往上加', s.requests === 5 && s.prompt === 12);
+  }
+
+  console.log('');
+  console.log('[缓存命中统计]');
+  {
+    /* 多批累加，而且要能区分「服务商没回报」和「回报了 0」——
+       cachedReports 就是干这个的：一次都没有，设置页才敢说「没回报」。 */
+    const { api, store } = load(honest2, null, false,
+      { prompt_tokens: 900, completion_tokens: 30, prompt_tokens_details: { cached_tokens: 768 } });
+    await api.translateBatch({ lines: mk(4) });
+    await api.translateBatch({ lines: mk(4) });
+    const s = store.stats;
+    ok('命中数按批累加', s.cached === 1536, JSON.stringify(s.cached));
+    ok('回报次数也累加', s.cachedReports === 2, JSON.stringify(s.cachedReports));
+    ok('输入 token 照常', s.prompt === 1800, JSON.stringify(s.prompt));
+  }
+  {
+    // 服务商压根不回报这个字段：命中数留 0，但回报次数也是 0 —— 这才分得清
+    const { api, store } = load(honest2);
+    await api.translateBatch({ lines: mk(4) });
+    const s = store.stats;
+    ok('没回报时 cachedReports 为 0', !s.cachedReports, JSON.stringify(s.cachedReports));
+    ok('没回报时 cached 不会变成 NaN', !s.cached, JSON.stringify(s.cached));
+  }
+  {
+    // 回报了 0：命中数是 0，但回报次数不是 0
+    const { api, store } = load(honest2, null, false,
+      { prompt_tokens: 900, completion_tokens: 30, prompt_tokens_details: { cached_tokens: 0 } });
+    await api.translateBatch({ lines: mk(4) });
+    const s = store.stats;
+    ok('回报了 0：命中数 0 但确实回报过', s.cached === 0 && s.cachedReports === 1,
+       JSON.stringify({ cached: s.cached, reports: s.cachedReports }));
   }
   console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
   process.exit(fail ? 1 : 0);

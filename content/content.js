@@ -120,6 +120,7 @@
     batchTier: 0,            // 当前批次档位，见 BATCH_TIERS
     batchCeil: 0,            // 本视频还允许升到哪一档（出过错位就往下压，不再回去）
     batchClean: 0,           // 连续几批干干净净了
+    batchDirty: 0,           // 连续几批出了错位（连着两批才封顶，见 noteBatchResult）
     running: 0,
     status: 'idle',          // idle | waiting | ready | translating | error | nosub
     error: '',
@@ -469,10 +470,21 @@
     }
   }
 
+  /* 连着这么多批错位，才认定「这一档真的不行」并永久封顶。
+   *
+   * 原来是一次就封。可封顶的代价极不对称：档位是每个视频从 0 重新起步的，tier 已经
+   * 是 0 时再出一次错位，这个视频就锁死在 20 句/批 —— 按真实档位逻辑算，两小时的
+   * 访谈会从 33 次请求涨到 62 次，光固定开销就多烧约一万五千 token。而模型偶尔把
+   * 相邻两句并成一句本来就是常态，单次错位远不足以判死刑。
+   *
+   * 回落仍然是一次就回落（那一步便宜又可逆），放宽的只是「永远不再试」这个判决。 */
+  const DIRTY_BEFORE_CEIL = 2;
+
   function resetTier() {
     st.batchTier = 0;
     st.batchCeil = BATCH_TIERS.length - 1;
     st.batchClean = 0;
+    st.batchDirty = 0;
   }
 
   /**
@@ -485,12 +497,13 @@
     if (bad) {
       st.batchClean = 0;
       if (st.batchTier > 0) st.batchTier--;
-      // 出过一次事，这一档以上就再也不试了（tier 已经是 0 的话，本视频就此锁死）
-      st.batchCeil = Math.min(st.batchCeil, st.batchTier);
+      // 连着第二次才封顶。中间只要有一批干净的，前一次就当它是偶发，既往不咎
+      if (++st.batchDirty >= DIRTY_BEFORE_CEIL) st.batchCeil = Math.min(st.batchCeil, st.batchTier);
       rebuildTail();
       return;
     }
     if (!clean) { st.batchClean = 0; return; }
+    st.batchDirty = 0;
     if (st.batchTier >= st.batchCeil) return;
     if (++st.batchClean < TIER_PROMOTE_AFTER) return;
     st.batchClean = 0;
