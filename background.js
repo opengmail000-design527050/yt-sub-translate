@@ -68,13 +68,27 @@ function buildSystemPrompt(s, sourceLang, noPunct, title) {
   const lang = resolveTargetName(s);
   const srcName = sourceLang ? (CODE_TO_NAME[sourceLang] || CODE_TO_NAME[String(sourceLang).split('-')[0]] || sourceLang) : '';
   const src = srcName ? `${srcName} ` : '';
+  /* 提示词是按「次」付的，一批 20 句时它占输入的四成，所以确实值得收。
+   * 但这里是合并冗余，不是删约束 —— 下面每一条约束在改之前都在，改之后也都在，
+   * 只是同一件事不再说两遍、并且挪到了它该待的那一行：
+   *   「never output fewer lines than you were given」跟第 2 行的 same count 是
+   *   同一句话，「never leave a line empty」跟 no blank lines 是同一句话，两处都
+   *   归进第 2 行的格式契约；原来单列的「半截句仍是半截句」并进第 3 行 —— 它跟
+   *   「意思留在本行」本来就是同一族约束。
+   *
+   * 为什么不像有些建议说的那样干脆砍到五行、省 170 token：那个数字只有把第 2、3
+   * 行砍掉才拿得到（它们俩占了系统提示的一半），而第 3 行是唯一一条「违反了你也
+   * 看不见」的约束 —— 模型只要把 N 个编号都给全，内容整体挪一位，translateChunk
+   * 里 missing 是空的，这一批照样记成干净。对齐统计只抓得住「编号缺了」，抓不住
+   * 「编号齐了但内容错位」，而后者正是用户会亲眼看到的那种中英对不上。
+   * 第 1 行的「tech podcast」也去掉了：领域由视频标题那行负责，写死在这里反而会
+   * 让非科技视频的语气跑偏，但「spoken conversation」要留着，它决定语域。 */
   const lines = [
-    `Translate ${src}subtitle lines from a tech podcast or long-form interview into ${lang}.`,
-    `Input: lines of "<n>|<text>". Output: exactly one "<n>|<translation>" per input line — same numbers, same order, same count, nothing else. No markdown, no notes, no blank lines.`,
-    `CRITICAL: each line is displayed on screen by itself at its own timestamp. Keep every line's meaning inside that line. Never carry content forward into a later line or pull content back from one, even when natural ${lang} word order differs. Never leave a line empty and never output fewer lines than you were given.`,
-    `The lines are one continuous conversation between hosts and guests. Keep the spoken register and each speaker's tone; do not make casual speech sound formal.`,
-    `Write natural, concise ${lang} that reads well as a subtitle at a glance. Keep proper nouns, product names and established English acronyms (AI, GPU, LLM, API) unchanged.`,
-    `A sentence fragment stays a fragment — translate it as a fragment rather than completing it.`
+    `Translate ${src}subtitle lines from a spoken conversation into ${lang}.`,
+    `Input: lines of "<n>|<text>". Output exactly one "<n>|<translation>" per input line — same numbers, same order, same count, nothing else. No markdown, no notes, never an empty or missing line.`,
+    `CRITICAL: each line appears on screen alone at its own timestamp. Keep every line's meaning inside its own line — never carry content forward into a later line or pull it back from an earlier one, even when natural ${lang} word order differs. A sentence fragment stays a fragment; do not complete it.`,
+    `Consecutive lines of one conversation between hosts and guests: keep each speaker's spoken register and tone, and do not make casual speech sound formal.`,
+    `Write natural, concise ${lang} that reads at a glance as a subtitle. Keep proper nouns, product names and established English acronyms (AI, GPU, LLM, API) unchanged.`
   ];
   /* 视频标题。同一个 agent / trait / model，在 AI 播客里和在 Rust 教程里根本不是
      一回事，而光看一批二十句常常判断不出领域。框架文字压到 20 token，加上标题本身
@@ -85,14 +99,19 @@ function buildSystemPrompt(s, sourceLang, noPunct, title) {
   /* 自动字幕：没有标点、没有大写、偶尔听错词。不说清楚的话，模型会把
      "i think its the case that" 这种东西照着字面硬翻，读起来像机器吐的。
      只在真的没标点时才加这几句 —— 有标点的轨不必为此多花 token。 */
-  if (noPunct) {
-    lines.push(
-      `The input is raw speech-recognition output: no punctuation, no capitalisation, and occasionally a misheard word. Work out the sentence structure yourself and punctuate the ${lang} properly.`,
-      `When a word is clearly a misrecognition and context makes the intended word obvious, translate what was meant. Do not guess when it is not obvious — translate what is there.`
-    );
-  }
+  if (noPunct) lines.push(...asrLines(lang));
   if (s.extraPrompt && s.extraPrompt.trim()) lines.push(s.extraPrompt.trim());
   return lines.join('\n');
+}
+
+/* 无标点的轨（多半是自动字幕）才追加这两句。抽成函数，测试才能断言「这段在不在」
+ * 而不是断言某个词怎么拼 —— 反向断言（有标点的轨不该带这几句）尤其经不起改措辞：
+ * 措辞一变它就永远为真，安安静静地不再检查任何东西。 */
+function asrLines(lang) {
+  return [
+    `The input is raw speech recognition: no punctuation, no capitalisation, occasionally a misheard word. Work out the sentence structure yourself and punctuate the ${lang} properly.`,
+    `Where a misrecognised word's intent is obvious from context, translate what was meant; where it is not, translate what is there.`
+  ];
 }
 
 function applyReasoning(body, s) {

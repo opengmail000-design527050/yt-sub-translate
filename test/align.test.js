@@ -12,7 +12,7 @@ const ok = (name, cond, extra) => {
 function load(reply, http, noUsage, usageOverride) {
   const src = fs.readFileSync(__dirname + '/../background.js', 'utf8')
     .replace(/^import .*$/m, '')
-    + '\nglobalThis.__t = { translateBatch, edgeGap, repairHead, strictHead };';
+    + '\nglobalThis.__t = { translateBatch, edgeGap, repairHead, strictHead, asrLines };';
 
   const calls = [];
   const store = {};
@@ -239,16 +239,21 @@ const mergeAt = (k) => (items) => {
   {
     const { api, calls } = load(honest);
     await api.translateBatch({ lines: mk(6), noPunct: true });
-    ok('系统提示里点明了这是语音识别结果', /speech-recognition/.test(calls[0].system), calls[0].system.slice(-300));
-    ok('要求它自己补标点', /punctuate/i.test(calls[0].system));
-    ok('允许它改明显听错的词', /misrecognition/.test(calls[0].system));
+    /* 认这段用 background 自己导出的常量，不抄措辞。要守住的约束单独断言：
+       「这是识别结果、自己补标点、明显听错的可以改」，怎么措辞随便。 */
+    const A = api.asrLines('简体中文');
+    ok('系统提示里带上了这一段', calls[0].system.includes(A[0]), calls[0].system.slice(-300));
+    ok('点明了这是语音识别结果', /speech recognition/i.test(A[0]), A[0]);
+    ok('要求它自己补标点', /punctuate/i.test(A[0]), A[0]);
+    ok('允许它改明显听错的词', /misrecognis|misheard/i.test(A.join(' ')), A[1]);
     ok('原有的逐行对齐要求一条没少', /exactly one/.test(calls[0].system) && /CRITICAL/.test(calls[0].system));
   }
 
   {
     const { api, calls } = load(honest);
     await api.translateBatch({ lines: mk(6) });
-    ok('有标点的轨不加这几句（不白花 token）', !/speech-recognition/.test(calls[0].system));
+    ok('有标点的轨不加这几句（不白花 token）',
+       !calls[0].system.includes(api.asrLines('简体中文')[0]), calls[0].system);
     ok('但正常的提示词照旧', /exactly one/.test(calls[0].system));
   }
 
@@ -263,7 +268,8 @@ const mergeAt = (k) => (items) => {
     await api.translateBatch({ lines: mk(6), noPunct: true });
     const repair = calls.find((c) => c.isRepair);
     ok('确实走到了补翻', !!repair, JSON.stringify(calls.map((c) => c.isRepair)));
-    ok('补翻那一次也带着这个标记', repair && /speech-recognition/.test(repair.system));
+    ok('补翻那一次也带着这个标记',
+       !!repair && repair.system.includes(api.asrLines('简体中文')[0]));
   }
 
 
