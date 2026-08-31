@@ -38,7 +38,7 @@ const win = {
 };
 win.window = win; win.self = win;
 const ctx = vm.createContext(win);
-vm.runInContext(fs.readFileSync('content/content.js', 'utf8'), ctx, { filename: 'content.js' });
+vm.runInContext(fs.readFileSync(__dirname + '/../content/content.js', 'utf8'), ctx, { filename: 'content.js' });
 const T = vm.runInContext('window.__YTST_TEST__', ctx);
 
 const segsOf = (events) => T.buildSegments(T.parseJson3(JSON.stringify({ events })));
@@ -155,6 +155,104 @@ console.log('\n[7] 有标点的轨不受影响：仍按句号切');
   check('切在句号处而不是 cue 边界',
         segs[0].text === 'So the question I keep coming back to is what intelligence really is.',
         JSON.stringify(segs[0].text));
+}
+
+console.log('\n[8] 小数点、版本号、价格不能当成句子结束');
+{
+  /* 修复前是「见点就断」：GPT-4.5 切成 "GPT-4." + "5"，$3.50 切成 "$3." + "50"，
+     Python 3.12 切成 "Python 3." + "12"。切坏的半截既直接显示在屏幕上、也直接发给
+     模型翻，而且第 3 步合并短句时会在接缝补一个空格（"GPT-4. 5"），原文哈希跟着变，
+     缓存也一起弄脏。科技访谈里这三样满地都是。 */
+  const segs = segsOf([
+    cue(0, 3000, 'We benchmarked GPT-4.5 against Claude and the difference was striking.'),
+    cue(3000, 3000, 'It costs $3.50 per million tokens, and Python 3.12 helps quite a lot here.')
+  ]);
+  const all = segs.map((s) => s.text).join(' || ');
+  check('GPT-4.5 没被切开', /GPT-4\.5/.test(all), all);
+  check('$3.50 没被切开', /\$3\.50/.test(all), all);
+  check('Python 3.12 没被切开', /Python 3\.12/.test(all), all);
+  check('没有句子以「数字 + 句点」结尾', !segs.some((s) => /\d\.$/.test(s.text)), all);
+  check('接缝处没有被塞进多余空格', !/\d\. \d/.test(all), all);
+  check('仍然按真正的句号切成两句', segs.length === 2, all);
+}
+
+console.log('\n[9] 句号后面确实跟着空格时照常切');
+{
+  /* 上一条的收紧不能矫枉过正：正常的句子边界必须还认得出来。 */
+  const segs = segsOf([
+    cue(0, 2000, 'The first sentence is long enough to stand on its own here.'),
+    cue(2000, 2000, 'The second sentence is also long enough to stand alone.')
+  ]);
+  check('按句号切成两句', segs.length === 2, JSON.stringify(segs.map((s) => s.text)));
+
+  // 结尾的句号（后面什么都没有）也算句子结束
+  const one = segsOf([cue(0, 2000, 'Just one complete sentence that ends right here.')]);
+  check('末尾句号算句子结束', one.length === 1 && /here\.$/.test(one[0].text),
+        JSON.stringify(one.map((s) => s.text)));
+
+  // 引号收尾
+  const q = segsOf([
+    cue(0, 2000, 'And then he said "this is the whole point of it."'),
+    cue(2000, 2000, 'Everybody in the room went completely quiet after that.')
+  ]);
+  check('引号收尾的句子也切得开', q.length === 2, JSON.stringify(q.map((s) => s.text)));
+}
+
+console.log('\n[10] 被跳过的句点不能把它前面的文字弄丢');
+{
+  /* 旧正则靠开头那段 [^.!?…。！？]* 保证两次匹配首尾相接。改成只扫标点之后，
+     如果不自己拿游标接住中间的文字，被跳过的那个点前面的一整段就会掉在两次匹配
+     之间被无声丢掉 —— 屏幕上少半句话，而且没有任何报错。 */
+  const src = 'The number 3.14 shows up everywhere in this field. And 2.71 does too, as it happens.';
+  const segs = segsOf([cue(0, 4000, src)]);
+  const joined = segs.map((s) => s.text).join(' ');
+  check('原文一个字都没丢', joined === src, JSON.stringify(joined));
+  check('3.14 完整', /3\.14/.test(joined), joined);
+  check('2.71 完整', /2\.71/.test(joined), joined);
+}
+
+console.log('\n[11] findIndex 不该让上一句多赖 0.35 秒');
+{
+  /* buildSegments 把每句的 end 拉到下一句的 start，句子之间首尾相接。修复前线性
+     查找带着 +0.35 的容差从 curIdx 往后扫，播放头已经进了下一句，上一句仍然满足
+     条件而且先命中 —— 顺序播放时每一次换句都固定晚半拍，声音到了下一句，字幕还
+     挂着上一句。 */
+  const segs = segsOf([
+    cue(0, 2000, 'The first sentence is long enough to stand on its own here.'),
+    cue(2000, 2000, 'The second sentence is also long enough to stand alone.'),
+    cue(4000, 2000, 'The third sentence rounds the whole thing off nicely.')
+  ]);
+  T.st.segments = segs;
+
+  T.st.curIdx = 0;
+  check('刚跨进第二句就切过去', T.findIndex(segs[1].start + 0.05) === 1,
+        'got ' + T.findIndex(segs[1].start + 0.05));
+  check('第二句中段仍是第二句', T.findIndex((segs[1].start + segs[1].end) / 2) === 1);
+  check('第一句自己的区间里还是第一句', T.findIndex(segs[0].start + 0.1) === 0);
+
+  // 顺序播放：每 0.1 秒走一步，每一刻都该落在包含它的那一句上
+  T.st.curIdx = 0;
+  let wrong = 0;
+  for (let t = 0; t < segs[segs.length - 1].end; t += 0.1) {
+    const want = segs.findIndex((s) => t >= s.start && t < s.end);
+    if (want < 0) continue;
+    const got = T.findIndex(t);
+    if (got !== want) wrong++;
+    T.st.curIdx = got;                 // 跟真实播放一样，下一次从这里接着找
+  }
+  check('整段顺序播放没有一刻落错句', wrong === 0, wrong + ' 处落错');
+
+  // 容差还得留着：句子之间真有空档时，上一句应当继续留在屏幕上
+  const gapped = segsOf([
+    cue(0, 2000, 'Something is said here and it runs a little while before stopping.'),
+    cue(30000, 2000, 'And then much later somebody finally says something else again.')
+  ]);
+  T.st.segments = gapped;
+  T.st.curIdx = 0;
+  check('空档里保留上一句', T.findIndex(gapped[0].end + 0.2) === 0,
+        'got ' + T.findIndex(gapped[0].end + 0.2));
+  T.st.segments = [];
+  T.st.curIdx = -1;
 }
 
 console.log('\n结果：' + pass + ' 通过 / ' + fail + ' 失败');

@@ -291,11 +291,23 @@
     // 1. 先切成句子（无标点的自动字幕退回按 cue 边界分组）
     let pieces = [];
     if (hasPunct) {
-      const re = /[^.!?…。！？]*[.!?…。！？]+["'’”)\]」』】]*/g;
+      /* 半角句点只有在后面跟着空白（或者到头了）时才算句子结束。
+       * 以前是见点就断，于是 GPT-4.5 被切成 "GPT-4." + "5"、$3.50 切成 "$3." + "50"、
+       * Python 3.12 切成 "Python 3." + "12" —— 科技访谈里版本号和价格满地都是。切坏的
+       * 半截既照原样显示在屏幕上、也照原样发给模型翻，而且第 3 步合并短句时会在接缝处
+       * 补一个空格（"GPT-4. 5"），原文哈希跟着变，缓存也一起弄脏。
+       * 全角句号本来就不跟空格，照旧见点就断。
+       *
+       * 写法上不能给旧正则挂个 lookahead 了事：旧正则靠开头那段 [^.!?…。！？]* 保证两次
+       * 匹配首尾相接，一旦某个点因为不满足条件被跳过，它前面那段文字就会掉在两次匹配
+       * 之间被无声丢掉。所以改成只扫标点本身，自己拿 last 游标接住中间的文字。 */
+      const re = /[.!?…。！？]+["'’”)\]」』】]*/g;
       let m, last = 0;
       while ((m = re.exec(full)) !== null) {
-        const s = m.index, e = m.index + m[0].length;
-        if (e > s) pieces.push({ s, e });
+        const e = m.index + m[0].length;
+        const cjkStop = /[…。！？]/.test(m[0]);
+        if (!cjkStop && e < full.length && !/\s/.test(full[e])) continue;   // 小数点、版本号
+        pieces.push({ s: last, e });
         last = e;
       }
       if (last < full.length && full.slice(last).trim()) pieces.push({ s: last, e: full.length });
@@ -1095,7 +1107,15 @@
     // 就近线性查找（播放通常是顺序的），失败再二分
     let i = st.curIdx;
     if (i >= 0 && i < segs.length) {
-      for (let k = i; k < Math.min(segs.length, i + 6); k++) {
+      const stop = Math.min(segs.length, i + 6);
+      /* 先按严格区间找。buildSegments 已经把每句的 end 拉到了下一句的 start，句子之间
+       * 首尾相接 —— 带着容差从前往后扫，播放头进入下一句之后的 0.35 秒里上一句仍然满足
+       * 条件、还会先命中，于是顺序播放时每一次换句都固定晚半拍。 */
+      for (let k = i; k < stop; k++) {
+        if (t >= segs[k].start && t < segs[k].end) return k;
+      }
+      // 严格区间里没有：这才轮到容差，它本来就是给句子之间的空隙用的
+      for (let k = i; k < stop; k++) {
         if (t >= segs[k].start - 0.15 && t < segs[k].end + 0.35) return k;
       }
     }
