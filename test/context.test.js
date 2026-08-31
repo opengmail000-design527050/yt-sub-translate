@@ -17,7 +17,7 @@ const ok = (name, cond, extra) => {
 function load(settings, reply) {
   const src = fs.readFileSync(__dirname + '/../background.js', 'utf8')
     .replace(/^import .*$/m, '')
-    + '\nglobalThis.__t = { translateBatch, refBlocks, safeTitle };';
+    + '\nglobalThis.__t = { translateBatch, refBlocks, safeTitle, REF_PREV_HEAD, REF_NEXT_HEAD, inputHead, repairHead, strictHead };';
 
   const calls = [];
   const store = {};
@@ -48,8 +48,11 @@ function load(settings, reply) {
       const user = body.messages[1].content;
       // 只认「编号|正文」的行 —— 参考块要是带了编号，这里的计数立刻就对不上
       const items = user.split('\n').filter((l) => /^\d+\|/.test(l));
-      const mode = /上一次回复漏掉/.test(user) ? 'repair'
-                 : /上一次回复没按格式/.test(user) ? 'strict' : '';
+      /* 认块头用的是 background 自己导出的那几个常量，不是抄一份措辞过来 ——
+         否则每次微调提示词都要回来改一遍测试桩。 */
+      const T = ctx.__t;
+      const mode = user.includes(T.repairHead(items.length)) ? 'repair'
+                 : user.includes(T.strictHead(items.length)) ? 'strict' : '';
       calls.push({ n: items.length, mode, lines: items, user, system: body.messages[0].content });
       return { ok: true, status: 200, text: async () => JSON.stringify({
         choices: [{ message: { content: reply(items, mode, calls.length) } }],
@@ -62,6 +65,11 @@ function load(settings, reply) {
   vm.runInContext(src, ctx);
   return { api: ctx.__t, calls };
 }
+
+/* 块头的措辞只有 background 说得算，测试一律引用它导出的常量。
+   断言的是「这个块在不在」，不是「这句话怎么写」—— 尤其是那些反向断言：
+   要是照抄一份措辞，改天提示词一改，它们会安安静静地永远为真。 */
+const H = load({}, () => '').api;
 
 /* n 行输入，文本是 L1..Ln */
 const mk = (n) => Array.from({ length: n }, (_, i) => ({ id: 100 + i, text: 'L' + (i + 1) }));
@@ -108,10 +116,16 @@ console.log('\n[2] 前文带译文、后文只带原文');
   ok('前文以「原文 → 译文」给出', u.includes('we cached the keys → 我们把 key 缓存了'), u);
   ok('没有译文的前文只给原文', /^right$/m.test(u));
   ok('后文原样给出', u.includes('so it scales linearly') && u.includes('which is the whole point'));
-  ok('前文块说了不要输出', /前文[\s\S]*?不要输出这里的任何一行/.test(u));
-  ok('后文块说了这次不翻', /后文[\s\S]*?这次不翻/.test(u));
+  ok('前文块有抬头', u.includes(H.REF_PREV_HEAD), u);
+  ok('后文块有抬头', u.includes(H.REF_NEXT_HEAD), u);
+  /* 措辞随便怎么改，但「不许把这些行输出出来」这条禁令一句都不能丢 ——
+     参考块的全部危险就在于模型把它们当成待翻行，编号一平移整批就作废。
+     所以这里断言的是这条约束在不在，不是它怎么写的。 */
+  ok('两个块头都带着「不要输出」的禁令',
+     /do not output/i.test(H.REF_PREV_HEAD) && /do not output/i.test(H.REF_NEXT_HEAD),
+     H.REF_PREV_HEAD + ' || ' + H.REF_NEXT_HEAD);
   ok('参考块一行都没编号，编号行仍是 3 行', calls[0].n === 3, '实际 ' + calls[0].n);
-  ok('抬头写明了要翻几行', u.includes('[以下是需要翻译的 3 行，只输出这些行]'));
+  ok('抬头写明了要翻几行', u.includes(H.inputHead(3)), u);
 }
 
 console.log('\n[3] 预算裁剪');
@@ -153,7 +167,9 @@ console.log('\n[4] 关掉上下文');
     title: 'Rust 所有权',
     sourceLang: 'en', noPunct: true
   });
-  ok('一个参考块都不发', !/前文|后文/.test(calls[0].user), calls[0].user);
+  ok('一个参考块都不发',
+     !calls[0].user.includes(H.REF_PREV_HEAD) && !calls[0].user.includes(H.REF_NEXT_HEAD),
+     calls[0].user);
   ok('标题不受这个开关影响', /Video title.*"Rust 所有权"/.test(calls[0].system));
 }
 
@@ -226,15 +242,15 @@ console.log('\n[7] 有标点的轨不发后文');
   });
   const u = calls[0].user;
   ok('后文一个字都没发', !u.includes('so it scales linearly'), u);
-  ok('后文块的抬头也没有', !u.includes('[后文'));
+  ok('后文块的抬头也没有', !u.includes(H.REF_NEXT_HEAD), u);
   ok('前文照发不误', u.includes('we cached the keys → 缓存了'));
-  ok('抬头仍然写明了行数', u.includes('[以下是需要翻译的 3 行，只输出这些行]'));
+  ok('抬头仍然写明了行数', u.includes(H.inputHead(3)), u);
 }
 {
   const { api, calls } = load({}, echo);
   await api.translateBatch({ lines: mk(3), next: ['so it scales linearly'], sourceLang: 'en', noPunct: true });
   ok('没标点的轨照发后文', calls[0].user.includes('so it scales linearly'));
-  ok('只有后文时不该冒出前文块', !calls[0].user.includes('[前文'));
+  ok('只有后文时不该冒出前文块', !calls[0].user.includes(H.REF_PREV_HEAD), calls[0].user);
 }
 console.log('\n[9] 没有译文的前文，只发给无标点的轨');
 {
@@ -250,16 +266,16 @@ console.log('\n[9] 没有译文的前文，只发给无标点的轨');
     await api.translateBatch({ lines: mk(3), prev: bare, sourceLang: 'en', noPunct: false });
     const u = calls[0].user;
     ok('有标点的轨：不发没译文的前文', !u.includes('and then the whole thing just fell over'), u);
-    ok('前文块整个不出现', !u.includes('[前文'), u);
-    // 没有任何参考块时，那句「以下是需要翻译的 N 行」也就没必要发了
-    ok('连抬头都省掉了', !u.includes('[以下是需要翻译的'), u);
+    ok('前文块整个不出现', !u.includes(H.REF_PREV_HEAD), u);
+    // 没有任何参考块时，那句「一共翻这 N 行」也就没必要发了
+    ok('连抬头都省掉了', !u.includes(H.inputHead(3)), u);
   }
   {
     const { api, calls } = load({}, echo);
     await api.translateBatch({ lines: mk(3), prev: bare, sourceLang: 'en', noPunct: true });
     const u = calls[0].user;
     ok('无标点的轨：照发', u.includes('and then the whole thing just fell over'), u);
-    ok('前文块出现了', u.includes('[前文'), u);
+    ok('前文块出现了', u.includes(H.REF_PREV_HEAD), u);
   }
   {
     // 有译文的前文，两种轨都该发 —— 那才是带前文真正想要的东西

@@ -12,7 +12,7 @@ const ok = (name, cond, extra) => {
 function load(reply, http, noUsage, usageOverride) {
   const src = fs.readFileSync(__dirname + '/../background.js', 'utf8')
     .replace(/^import .*$/m, '')
-    + '\nglobalThis.__t = { translateBatch, edgeGap };';
+    + '\nglobalThis.__t = { translateBatch, edgeGap, repairHead, strictHead };';
 
   const calls = [];
   const store = {};
@@ -37,7 +37,8 @@ function load(reply, http, noUsage, usageOverride) {
       const body = JSON.parse(init.body);
       const user = body.messages[1].content;
       const items = user.split('\n').filter((l) => /^\d+\|/.test(l));
-      const isRepair = /上一次回复漏掉/.test(user);
+      // 用 background 自己导出的那句去认，别在测试里抄一份措辞
+      const isRepair = user.includes(ctx.__t.repairHead(items.length));
       calls.push({ n: items.length, isRepair, lines: items, user, system: body.messages[0].content });
       // http 桩：模拟 401 / 网络中断这类跟译文格式无关的失败
       if (http) {
@@ -164,7 +165,8 @@ const mergeAt = (k) => (items) => {
     const { api, calls } = load((items, isRepair, nth) =>
       (nth === 1 ? items.map((l) => '译' + l.split('|')[1]).join('\n') : honest(items)));
     const r = await api.translateBatch({ lines: mk(6) });
-    ok('第二次把格式要求说死了', !!calls[1] && /必须输出正好/.test(calls[1].user), '请求数=' + calls.length);
+    ok('第二次把格式要求说死了',
+       !!calls[1] && calls[1].user.includes(api.strictHead(6)), '请求数=' + calls.length);
     ok('六行都翻出来了', Object.keys(r.map || {}).length === 6);
     ok('只多花了一次请求', calls.length === 2);
   }

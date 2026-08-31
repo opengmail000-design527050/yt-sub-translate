@@ -313,6 +313,30 @@ function cachedTokens(u) {
 const REF_PREV_BUDGET = 420;
 const REF_NEXT_BUDGET = 260;
 
+/* 用户消息里的脚手架，全部用英文 —— 跟系统提示同一种语言。
+ *
+ * 以前这几句是硬编码中文的。可目标语言是用户设的（DEFAULTS 里还是 'auto'，跟随
+ * 浏览器界面语言），日语界面的用户拿到的就是「英文指令 + 中文旁白 + 英文正文 +
+ * 要日语输出」—— 四种语言搅在一起，而他根本无从察觉。英文是唯一对所有目标语言
+ * 都成立的选择。
+ *
+ * repair 和 strict 这两句尤其要紧：它们发出去的时机，正是模型上一轮已经出过错
+ * 的时候（漏了行、连编号都没带回来），是整条链路上最需要指令被不折不扣执行的
+ * 一句话，不该还在换语言。措辞刻意跟系统提示对齐，用同一套 "<n>|<translation>"
+ * 记法。
+ *
+ * 抽成常量是为了让测试断言「有没有这个块」而不是断言某一句怎么写的，
+ * 以后再调提示词不会平白弄红一堆测试。 */
+const REF_PREV_HEAD =
+  '[Earlier lines, already translated. Reference only — match their terminology, names and tone. Do not output these.]';
+const REF_NEXT_HEAD =
+  '[Next batch, not for translation. Reference only — shows where the last lines are heading. Do not output these.]';
+const inputHead = (n) => `[Translate exactly these ${n} lines. Output only these.]`;
+const repairHead = (n) =>
+  `[Your previous reply omitted these ${n} lines. Translate every one — exactly one "<n>|<translation>" per input line. Do not merge lines. No other text.]`;
+const strictHead = (n) =>
+  `[Your previous reply did not follow the format. Output exactly ${n} lines, each starting with its input number and a pipe, like "1|translation". Never merge lines. Output nothing else.]`;
+
 function refWidth(t) {
   let w = 0;
   for (const ch of String(t)) w += ch.codePointAt(0) > 0x2e80 ? 2 : 1;
@@ -352,7 +376,7 @@ function refBlocks(ref, noPunct) {
     w += refWidth(line);
   }
   if (prev.length) {
-    parts.push('[前文，已经翻过的部分。只用来对齐术语、人称和口吻，不要重译，不要输出这里的任何一行]\n' + prev.join('\n'));
+    parts.push(REF_PREV_HEAD + '\n' + prev.join('\n'));
   }
 
   /* 后文只给没有标点的轨。有标点时 buildSegments 是按 [.!?。！？] 切的，批尾那一句
@@ -373,7 +397,7 @@ function refBlocks(ref, noPunct) {
     /* 无标点的轨是按 0.45 秒停顿切的，停顿不等于句子结束，超长的那些还会被强切在
        连词处 —— 批尾那一句因此可能是半截，而它是整批里唯一看不见下文的一行。
        把下一批的开头给出来，模型才知道这句往哪儿走。 */
-    parts.push('[后文，属于下一批，这次不翻。只用来判断最后几句话往哪儿走，不要输出这里的任何一行]\n' + next.join('\n'));
+    parts.push(REF_NEXT_HEAD + '\n' + next.join('\n'));
   }
 
   return parts;
@@ -390,14 +414,10 @@ async function askModel(s, items, ref, mode, sourceLang, noPunct, title) {
   if (!mode && s.useContext) {
     const blocks = refBlocks(ref, noPunct);
     // 有参考块时才写这句抬头 —— 没有块的话它只是白花 token
-    if (blocks.length) userParts.push(...blocks, `[以下是需要翻译的 ${items.length} 行，只输出这些行]`);
+    if (blocks.length) userParts.push(...blocks, inputHead(items.length));
   }
-  if (mode === 'repair') {
-    userParts.push(`[上一次回复漏掉了这 ${items.length} 行。逐行翻译，一行输入对应一行 "<n>|<译文>"，不要合并，不要多余文字]`);
-  }
-  if (mode === 'strict') {
-    userParts.push(`[上一次回复没按格式。这次必须输出正好 ${items.length} 行，每行以输入的编号加竖线开头，形如 "1|译文"。不要合并任何两行，不要写编号以外的任何内容]`);
-  }
+  if (mode === 'repair') userParts.push(repairHead(items.length));
+  if (mode === 'strict') userParts.push(strictHead(items.length));
   userParts.push(items.map((it) => `${it.n}|${it.text}`).join('\n'));
 
   const body = {
