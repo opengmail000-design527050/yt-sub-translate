@@ -166,8 +166,8 @@ function boot(opts) {
   win.location = { href: 'https://www.youtube.com/watch?v=VID', search: '?v=VID' };
 
   const ctx = vm.createContext(win);
-  vm.runInContext(fs.readFileSync('content/content.js', 'utf8'), ctx, { filename: 'content.js' });
-  vm.runInContext(fs.readFileSync('content/inject.js', 'utf8'), ctx, { filename: 'inject.js' });
+  vm.runInContext(fs.readFileSync(__dirname + '/../content/content.js', 'utf8'), ctx, { filename: 'content.js' });
+  vm.runInContext(fs.readFileSync(__dirname + '/../content/inject.js', 'utf8'), ctx, { filename: 'inject.js' });
   const vmWindow = vm.runInContext('window', ctx);
 
   const status = () => new Promise((res) => chrome.runtime.onMessage._l.forEach((f) => f({ type: 'getStatus' }, {}, res)));

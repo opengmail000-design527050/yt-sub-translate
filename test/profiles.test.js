@@ -71,8 +71,8 @@ sandbox.window = sandbox;
 const ctx = vm.createContext(sandbox);
 
 /* common.js 去掉 export，options.js 去掉那条 import，拼在一起 */
-const common = fs.readFileSync('common.js', 'utf8').replace(/^export /gm, '');
-const options = fs.readFileSync('options/options.js', 'utf8')
+const common = fs.readFileSync(__dirname + '/../common.js', 'utf8').replace(/^export /gm, '');
+const options = fs.readFileSync(__dirname + '/../options/options.js', 'utf8')
   .replace(/^import[\s\S]*?from '\.\.\/common\.js';/m, '');
 vm.runInContext(common + '\n' + options + '\nglobalThis.__o = { init, switchProfile, addProfile, deleteProfile, startRename, endRename, activeProfile, getP: () => P, getS: () => S };',
                 ctx, { filename: 'options-bundle.js' });

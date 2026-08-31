@@ -99,7 +99,7 @@ win.window = win; win.self = win; win.document = doc; win.chrome = chrome;
 win.location = { href: 'https://www.youtube.com/watch?v=A' };
 
 const ctx = vm.createContext(win);
-vm.runInContext(fs.readFileSync('content/content.js', 'utf8'), ctx, { filename: 'content.js' });
+vm.runInContext(fs.readFileSync(__dirname + '/../content/content.js', 'utf8'), ctx, { filename: 'content.js' });
 const vmWindow = vm.runInContext('window', ctx);
 
 const toPage = (type, data) => {
