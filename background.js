@@ -20,8 +20,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  if (msg.type === 'addUsage') {
-    addUsage(msg.payload).then(() => sendResponse({ ok: true }));
+  if (msg.type === 'cacheIndex') {
+    cacheIndexOp(msg.payload)
+      .then((n) => sendResponse({ ok: true, removed: n }))
+      .catch((e) => sendResponse({ ok: false, error: errText(e) }));
     return true;
   }
 });
@@ -489,6 +491,67 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * 串成一条队列，写入就不会丢。service worker 里只有这一个写入方，够用了。 */
 let usageQueue = Promise.resolve();
 
+/* ------------------------------------------------------------------ *
+ * 缓存索引
+ *
+ * { 缓存键: 最后使用时间 }。淘汰旧缓存时只读这一份，不必把所有译文正文读进内存。
+ *
+ * 维护它同样是「读出来 → 改 → 写回去」，而且写入方不止一个：每个 YouTube 标签页
+ * 都在写，设置页清空缓存时也在写。两边各读一份旧索引、各写回自己那份，后写的把
+ * 先写的整个盖掉 —— 被盖掉的那些键对应的译文正文从此没人清理（淘汰只遍历索引里
+ * 的键），存储只增不减，unlimitedStorage 也扛不住长期这么漏。
+ *
+ * 所以索引只在这里改，而且跟用量统计一样串成一条队列。内容脚本和设置页都改成
+ * 发消息过来，不再各自动 storage。
+ * ------------------------------------------------------------------ */
+let cacheQueue = Promise.resolve();
+
+/** payload: { op: 'touch' | 'forget' | 'clear', key, prune?: { days, max } } */
+function cacheIndexOp(payload) {
+  const task = cacheQueue.then(() => runCacheOp(payload || {}));
+  // 一次失败不能把整条队列卡死，也不能把这次的返回值漏给下一次
+  cacheQueue = task.then(() => {}, () => {});
+  return task;
+}
+
+async function runCacheOp(p) {
+  if (p.op === 'clear') {
+    const all = await chrome.storage.local.get(null);
+    const keys = Object.keys(all).filter((k) => k.startsWith('c_'));
+    if (keys.length) await chrome.storage.local.remove(keys);
+    await chrome.storage.local.set({ cacheIndex: {} });
+    return keys.length;
+  }
+
+  const key = p.key || '';
+  if (!key) return 0;
+
+  const got = await chrome.storage.local.get('cacheIndex');
+  const idx = got.cacheIndex || {};
+  if (p.op === 'forget') delete idx[key];
+  else idx[key] = Date.now();
+
+  const drop = p.prune ? staleKeys(idx, p.prune) : [];
+  for (const k of drop) delete idx[k];
+  if (drop.length) await chrome.storage.local.remove(drop);
+  await chrome.storage.local.set({ cacheIndex: idx });
+  return drop.length;
+}
+
+/** 过期的，加上超出条数上限的。刚 touch 过的那条时间最新、排在最前，不会淘汰掉自己。 */
+function staleKeys(idx, opt) {
+  const days = Number(opt.days) || 60;
+  const max = Number(opt.max) || 300;
+  const cutoff = Date.now() - days * 86400000;
+  const expired = [], live = [];
+  for (const k of Object.keys(idx)) ((idx[k] || 0) < cutoff ? expired : live).push(k);
+  live.sort((a, b) => (idx[b] || 0) - (idx[a] || 0));
+  return expired.concat(live.slice(max));
+}
+
+/* ------------------------------------------------------------------ *
+ * 用量统计
+ * ------------------------------------------------------------------ */
 /* align 里那几个计数是拿来回答一个具体问题的：改了提示词或上下文之后，模型的
  * 逐行对齐是变好了还是变差了。翻译好不好没法自动判，但错位有客观指纹 ——
  * 拆过块、留了空、最后放弃了几行，这三样都是现成的。 */

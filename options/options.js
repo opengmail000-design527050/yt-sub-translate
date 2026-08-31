@@ -452,12 +452,12 @@ async function refreshStats() {
   $('statLine').textContent = parts.join(' · ');
 }
 
+/* 清空也走 background：索引的读-改-写全都排在那一条队列上。自己在这儿删，
+   正在看视频的标签页可能刚好把它读到一半的旧索引整个写回来，抵消掉这次清空。 */
 async function clearCache() {
-  const all = await chrome.storage.local.get(null);
-  const keys = Object.keys(all).filter((k) => k.startsWith('c_'));
-  if (keys.length) await chrome.storage.local.remove(keys);
-  await chrome.storage.local.set({ cacheIndex: {} });
-  toast(`已清空 ${keys.length} 个视频的缓存`);
+  let res = null;
+  try { res = await chrome.runtime.sendMessage({ type: 'cacheIndex', payload: { op: 'clear' } }); } catch (_) {}
+  toast(res && res.ok ? `已清空 ${res.removed} 个视频的缓存` : '清空失败，请重试');
   refreshStats();
 }
 

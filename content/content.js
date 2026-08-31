@@ -133,6 +133,7 @@
     trackRequested: false,
     trackAt: 0,              // 上次点名要轨的时间，用来决定隔多久可以再要一次
     fallbackTried: false,
+    nativeOn: false,         // 兜底时我们替用户打开过原生字幕，关翻译时要还回去
     trackSig: '',            // 当前用的是哪条字幕轨（lang|kind|tlang）
     reqSeq: 0,               // 每次点名要轨都发一个新编号
     wantReq: 0,              // 正在等的那个编号，只认它回来的那一份
@@ -521,15 +522,14 @@
     return 'c_' + videoId + '_' + hash(cacheSig());
   }
 
-  /* 单独维护一份 { key: 最后使用时间 } 索引，这样清理时不用把所有缓存正文读进内存 */
-  async function touchIndex(key) {
-    try {
-      const got = await chrome.storage.local.get('cacheIndex');
-      const idx = got.cacheIndex || {};
-      idx[key] = Date.now();
-      await chrome.storage.local.set({ cacheIndex: idx });
-    } catch (_) {}
+  /* 索引（{ 缓存键: 最后使用时间 }）的读-改-写交给 background 排队执行，不在这儿
+   * 直接动 storage：同时开着几个 YouTube 标签页时，两边各读一份旧索引、各写回自己
+   * 那份，后写的把先写的整个盖掉 —— 丢了索引的那些缓存正文从此没人清理（淘汰只
+   * 遍历索引里的键），存储只增不减。 */
+  async function cacheIndexOp(op, key, prune) {
+    try { await chrome.runtime.sendMessage({ type: 'cacheIndex', payload: { op, key, prune } }); } catch (_) {}
   }
+  const touchIndex = (key) => cacheIndexOp('touch', key);
 
   async function loadCache(videoId) {
     if (!S.useCache) { st.cache = { items: {} }; return; }
@@ -549,32 +549,10 @@
       const k = cacheKey(st.videoId);
       st.cache.ts = Date.now();
       await chrome.storage.local.set({ [k]: st.cache });
-      await touchIndex(k);
-      pruneCache();
+      // 顺手让 background 淘汰过期和超量的缓存，正好在同一次索引读写里做掉
+      await cacheIndexOp('touch', k, { days: Number(S.cacheDays) || 60, max: Number(S.cacheMax) || 300 });
     } catch (_) {}
   }, 4000);
-
-  async function pruneCache() {
-    try {
-      const got = await chrome.storage.local.get('cacheIndex');
-      const idx = got.cacheIndex || {};
-      const days = Number(S.cacheDays) || 60;
-      const max = Number(S.cacheMax) || 300;
-      const cutoff = Date.now() - days * 86400000;
-
-      let keys = Object.keys(idx);
-      const expired = keys.filter((k) => (idx[k] || 0) < cutoff);
-
-      keys = keys.filter((k) => !expired.includes(k)).sort((a, b) => (idx[b] || 0) - (idx[a] || 0));
-      const overflow = keys.slice(max);
-
-      const drop = expired.concat(overflow);
-      if (!drop.length) return;
-      for (const k of drop) delete idx[k];
-      await chrome.storage.local.remove(drop);
-      await chrome.storage.local.set({ cacheIndex: idx });
-    } catch (_) {}
-  }
 
   function cacheGet(text) {
     if (!S.useCache || !st.cache) return null;
@@ -799,9 +777,7 @@
       try {
         const k = cacheKey(st.videoId);
         await chrome.storage.local.remove(k);
-        const got = await chrome.storage.local.get('cacheIndex');
-        const idx = got.cacheIndex || {};
-        if (idx[k]) { delete idx[k]; await chrome.storage.local.set({ cacheIndex: idx }); }
+        await cacheIndexOp('forget', k);
       } catch (_) {}
     }
     render();
@@ -1249,6 +1225,10 @@
     st.active = false;
     if (byUser) st.userOff = true;
     document.documentElement.classList.remove('ytst-hide-native');
+    /* 兜底取字幕时我们替用户打开过原生字幕 —— 翻译开着的时候它被 ytst-hide-native
+     * 藏着，看不出来；一旦关掉翻译就凭空冒出一条用户自己没开过的字幕，而且从来没人
+     * 负责关。inject.js 那边记着动手前的状态，这里让它原样还回去。 */
+    if (st.nativeOn) { st.nativeOn = false; post2page('disableNative'); }
     removeOverlay();
     syncButton();
     updateStatus();
@@ -1282,6 +1262,7 @@
     setTimeout(() => {
       if (st.active && !st.segments.length && !st.fallbackTried) {
         st.fallbackTried = true;
+        st.nativeOn = true;
         post2page('enableNative', { lang: st.sourceLang || '' });
       }
     }, 3500);
@@ -1519,6 +1500,7 @@
       }
       if (st.active && !st.fallbackTried) {
         st.fallbackTried = true;
+        st.nativeOn = true;
         post2page('enableNative', { lang: st.sourceLang || '' });
       }
     }

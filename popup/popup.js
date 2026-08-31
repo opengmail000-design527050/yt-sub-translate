@@ -93,9 +93,13 @@ function bind() {
   $('openOptions').addEventListener('click', () => chrome.runtime.openOptionsPage());
 }
 
+/* content script 只注入 www.youtube.com（见 manifest 的 matches）。
+   光看 includes('youtube.com') 会把 music.youtube.com、studio.youtube.com 也认下来，
+   而那些页面上没有 content script、getStatus 永远收不到回应，于是状态栏一直写着
+   「页面未就绪，刷新一下试试」—— 催用户去刷新一个刷新多少次也不会好的页面。 */
 async function connectTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab && tab.url && tab.url.includes('youtube.com')) tabId = tab.id;
+  if (tab && tab.url && /^https:\/\/www\.youtube\.com\//.test(tab.url)) tabId = tab.id;
 }
 
 async function refreshStatus() {

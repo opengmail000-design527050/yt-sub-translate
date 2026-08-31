@@ -85,7 +85,7 @@ win.window = win; win.self = win; win.document = doc; win.chrome = chrome;
 win.location = { href: 'https://www.youtube.com/watch?v=A' };
 
 const ctx = vm.createContext(win);
-vm.runInContext(fs.readFileSync('content/content.js', 'utf8'), ctx, { filename: 'content.js' });
+vm.runInContext(fs.readFileSync(__dirname + '/../content/content.js', 'utf8'), ctx, { filename: 'content.js' });
 /* vm 里的 window 是沙箱全局代理，跟宿主的 win 不是同一个对象；
    content.js 用 e.source !== window 做校验，所以事件里必须带 vm 侧的那个。 */
 const vmWindow = vm.runInContext('window', ctx);
@@ -481,6 +481,74 @@ const check = (name, cond, extra) => {
 
     const last = sent[sent.length - 1];
     check('最后一批没有后文', last.next.length === 0, JSON.stringify(last.next));
+  }
+
+  console.log('\n[19] 缓存索引只经由 background 改写');
+  {
+    /* 索引是「读出来 → 改 → 写回去」，而写入方不止一个：每个 YouTube 标签页都在写，
+       设置页清空缓存时也在写。以前 content.js 自己动 storage，两个标签页各写各的，
+       后写的把先写的整个盖掉 —— 丢了索引的缓存正文从此没人清理（淘汰只遍历索引里
+       的键），存储只增不减。现在一律发消息给 background 排队处理。 */
+    delete storage.cacheIndex;
+    const ops = [];
+    runtimeReply = async (m) => {
+      if (m.type === 'cacheIndex') { ops.push(m.payload); return { ok: true, removed: 0 }; }
+      return { ok: true, map: Object.fromEntries(m.payload.lines.map((l) => [l.id, '译:' + l.id])), dropped: [] };
+    };
+    await chrome.storage.local.set({
+      settings: { targetLang: '简体中文', apiKey: 'x', concurrency: 1, useCache: true, extraPrompt: 'idx' }
+    });
+    await sleep(30);
+    toPage('player', { videoId: 'IDX', title: 'idx', audioLang: 'en', tracks: [{ languageCode: 'en', kind: 'asr' }] });
+    await sleep(30);
+    toPage('track', { videoId: 'IDX', body: track(8, 'Indexed') });
+    await sleep(260);
+
+    check('载入缓存时报了一次 touch', ops.some((o) => o.op === 'touch'),
+          JSON.stringify(ops));
+    const pruning = ops.find((o) => o.op === 'touch' && o.prune);
+    check('落盘那次顺带带上了淘汰参数', !!pruning && pruning.prune.days > 0 && pruning.prune.max > 0,
+          JSON.stringify(pruning));
+    check('content 自己没有直接写 cacheIndex', storage.cacheIndex === undefined,
+          JSON.stringify(storage.cacheIndex));
+
+    ops.length = 0;
+    await new Promise((res) => chrome.runtime.onMessage._l.forEach((f) => f({ type: 'purgeCache' }, {}, res)));
+    await sleep(60);
+    check('重翻本视频是让 background 把这条索引忘掉', ops.some((o) => o.op === 'forget'),
+          JSON.stringify(ops));
+    check('重翻仍然直接删掉了缓存正文', !cacheKeys().some((k) => k.includes('IDX')), JSON.stringify(cacheKeys()));
+  }
+
+  console.log('\n[20] 兜底开过的原生字幕要还回去');
+  {
+    /* 取字幕失败时我们会替用户打开原生字幕，好让播放器自己去拉、我们从劫持里截获。
+       翻译开着的时候它被 CSS 藏着，看不出来；可一旦关掉翻译，用户面前就凭空多出
+       一条自己没开过的字幕，而且从来没人负责关 —— disableNative 以前是死代码。 */
+    runtimeReply = async () => ({ ok: true, map: {}, dropped: [] });
+    await chrome.storage.local.set({
+      settings: { targetLang: '简体中文', apiKey: 'x', autoStart: true, extraPrompt: 'native' }
+    });
+    await sleep(30);
+    posted.length = 0;
+    // 给了字幕轨，但一份字幕体都不回 —— 兜底计时器会走到 enableNative
+    toPage('player', { videoId: 'NAT', title: 'nat', audioLang: 'en', tracks: [{ languageCode: 'en', kind: 'asr' }] });
+    await sleep(200);
+    check('取不到字幕时确实兜底开了原生字幕', posted.some((p) => p.type === 'enableNative'),
+          JSON.stringify(posted.map((p) => p.type)));
+    check('这时还没有关字幕的动作', !posted.some((p) => p.type === 'disableNative'));
+
+    await new Promise((res) => chrome.runtime.onMessage._l.forEach((f) => f({ type: 'setActive', value: false }, {}, res)));
+    await sleep(20);
+    check('关掉翻译时把原生字幕还了回去', posted.some((p) => p.type === 'disableNative'),
+          JSON.stringify(posted.map((p) => p.type)));
+
+    // 再关一次不该重复发：没开过就不该去动用户的字幕
+    posted.length = 0;
+    await new Promise((res) => chrome.runtime.onMessage._l.forEach((f) => f({ type: 'setActive', value: false }, {}, res)));
+    await sleep(20);
+    check('没开过就不去动用户的字幕', !posted.some((p) => p.type === 'disableNative'),
+          JSON.stringify(posted.map((p) => p.type)));
   }
 
   console.log('\n结果：' + pass + ' 通过 / ' + fail + ' 失败');

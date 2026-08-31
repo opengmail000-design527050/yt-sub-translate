@@ -139,13 +139,25 @@
     };
   }
 
+  const capSig = (c) => (c ? c.languageCode + '|' + c.kind + '|' + c.tlang : '');
+
   let lastCap = '';
   function watchCaption() {
     const c = currentCaption();
-    const sig = c ? (c.languageCode + '|' + c.kind + '|' + c.tlang) : '';
+    const sig = capSig(c);
     if (sig === lastCap) return;
     lastCap = sig;
     if (c) post('captiontrack', c);
+  }
+
+  /* 我们自己动过字幕轨之后调一次，把当前状态记成「已经看过」。
+   * 不压住的话 watchCaption 会把这次变化当成用户在 CC 菜单里的选择报上去，内容脚本
+   * 从此认定「用户指定了这个语言」，之后所有点名要轨都锁死在这条上 —— 而兜底挑轨
+   * 本来就只是猜，猜错了就再也纠正不回来。
+   * setOption 未必立刻反映到 getOption 上；读不到新值时这里等于没压住，
+   * 那就退回原来的行为，不会更糟。 */
+  function markCaptionSeen() {
+    lastCap = capSig(currentCaption());
   }
 
   /* ---------- 3. 直接拉取字幕轨 ---------- */
@@ -212,6 +224,12 @@
   }
 
   /* ---------- 4. 兜底：打开原生字幕触发播放器请求 ---------- */
+  /* 打开原生字幕是我们自己的动作，用户没要求过 —— 翻译开着的时候它被 CSS 藏起来，
+   * 一旦关掉翻译就凭空冒出一条自己没开过的字幕，而且没人负责关。
+   * 所以动手之前先记下当时的状态，内容脚本说「不用了」的时候原样还回去。
+   * null = 我们没动过；{} = 动之前字幕本来就是关着的。 */
+  let nativePrev = null;
+
   function enableNative(lang) {
     const p = getPlayer();
     if (!p) return;
@@ -222,14 +240,26 @@
         try { list = p.getOption('captions', 'tracklist', { includeAsr: true }) || []; } catch (_) {}
         if (!list.length) { try { list = p.getOption('captions', 'tracklist') || []; } catch (_) {} }
         const t = pickTrack(list, lang || '');
-        if (t) { try { p.setOption('captions', 'track', t); } catch (_) {} }
+        if (!t) return;
+        if (nativePrev === null) {
+          let cur = null;
+          try { cur = p.getOption('captions', 'track'); } catch (_) {}
+          nativePrev = cur && cur.languageCode ? cur : {};
+        }
+        try { p.setOption('captions', 'track', t); } catch (_) {}
+        markCaptionSeen();
       }, 400);
     } catch (_) {}
   }
 
   function disableNative() {
     const p = getPlayer();
-    try { if (p) p.setOption('captions', 'track', {}); } catch (_) {}
+    // 没动过就别动。用户自己开着的字幕不归我们关
+    if (!p || nativePrev === null) return;
+    const prev = nativePrev;
+    nativePrev = null;
+    try { p.setOption('captions', 'track', prev); } catch (_) {}
+    markCaptionSeen();
   }
 
   /* ---------- 消息通道 ---------- */
