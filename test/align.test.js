@@ -9,7 +9,7 @@ const ok = (name, cond, extra) => {
 };
 
 /* ---- 把 background.js 装进沙箱 ---- */
-function load(reply, http) {
+function load(reply, http, noUsage) {
   const src = fs.readFileSync(__dirname + '/../background.js', 'utf8')
     .replace(/^import .*$/m, '')
     + '\nglobalThis.__t = { translateBatch, edgeGap };';
@@ -38,7 +38,7 @@ function load(reply, http) {
       const user = body.messages[1].content;
       const items = user.split('\n').filter((l) => /^\d+\|/.test(l));
       const isRepair = /上一次回复漏掉/.test(user);
-      calls.push({ n: items.length, isRepair, lines: items, user });
+      calls.push({ n: items.length, isRepair, lines: items, user, system: body.messages[0].content });
       // http 桩：模拟 401 / 网络中断这类跟译文格式无关的失败
       if (http) {
         const h = http(calls.length);
@@ -47,14 +47,15 @@ function load(reply, http) {
       }
       const content = reply(items, isRepair, calls.length);
       return { ok: true, status: 200, text: async () => JSON.stringify({
-        choices: [{ message: { content } }], usage: { prompt_tokens: 1, completion_tokens: 1 }
+        choices: [{ message: { content } }],
+        usage: noUsage ? undefined : { prompt_tokens: 1, completion_tokens: 1 }
       }) };
     }
   };
   ctx.globalThis = ctx;
   vm.createContext(ctx);
   vm.runInContext(src, ctx);
-  return { api: ctx.__t, calls };
+  return { api: ctx.__t, calls, store };
 }
 
 const mk = (n) => Array.from({ length: n }, (_, i) => ({ id: 100 + i, text: 'L' + (i + 1) }));
@@ -232,6 +233,108 @@ const mergeAt = (k) => (items) => {
     ok('HTTP ' + st + ' 如实报失败', r.ok === false && new RegExp(String(st)).test(r.error || ''), r.error);
   }
 
+  console.log('[14] 自动字幕：得让模型知道它拿到的是识别出来的文本');
+  {
+    const { api, calls } = load(honest);
+    await api.translateBatch({ lines: mk(6), noPunct: true });
+    ok('系统提示里点明了这是语音识别结果', /speech-recognition/.test(calls[0].system), calls[0].system.slice(-300));
+    ok('要求它自己补标点', /punctuate/i.test(calls[0].system));
+    ok('允许它改明显听错的词', /misrecognition/.test(calls[0].system));
+    ok('原有的逐行对齐要求一条没少', /exactly one/.test(calls[0].system) && /CRITICAL/.test(calls[0].system));
+  }
+
+  {
+    const { api, calls } = load(honest);
+    await api.translateBatch({ lines: mk(6) });
+    ok('有标点的轨不加这几句（不白花 token）', !/speech-recognition/.test(calls[0].system));
+    ok('但正常的提示词照旧', /exactly one/.test(calls[0].system));
+  }
+
+  /* 补翻和严格重问是另外发的请求，各自重新拼一次系统提示 ——
+     漏传这个标记的话，重发出去的那次就退回成「当成正常文本」了。 */
+  {
+    const { api, calls } = load((items, isRepair) => {
+      if (isRepair) return honest(items);
+      // 中间留个空行 —— 会走单独补翻，不会拆块
+      return items.map((l, i) => (i === 2 ? '' : (i + 1) + '|译' + l.split('|')[1])).filter(Boolean).join('\n');
+    });
+    await api.translateBatch({ lines: mk(6), noPunct: true });
+    const repair = calls.find((c) => c.isRepair);
+    ok('确实走到了补翻', !!repair, JSON.stringify(calls.map((c) => c.isRepair)));
+    ok('补翻那一次也带着这个标记', repair && /speech-recognition/.test(repair.system));
+  }
+
+
+  /* ---------------------------------------------------------------- *
+   * 对齐统计
+   *
+   * 这几个数是拿来回答「改了提示词之后对齐是变好还是变差」的。所以两件事
+   * 必须成立：错位要如实记下来，而跟对齐无关的失败（401、网络断）绝不能算进去
+   * —— 一次鉴权失败就把错位率顶到 100%，这个数就没法看了。
+   * ---------------------------------------------------------------- */
+  console.log('\n[对齐统计]');
+  const honest2 = (items) => items.map((l, i) => (i + 1) + '|译' + l.split('|')[1]).join('\n');
+
+  {
+    const { api, store } = load(honest2);
+    await api.translateBatch({ lines: mk(6) });
+    const s = store.stats;
+    ok('干净的一批：批数 +1', s.batches === 1, JSON.stringify(s));
+    ok('干净的一批：不算错位', s.dirty === 0 && s.split === 0);
+    ok('干净的一批：没有补翻也没有放弃', s.repaired === 0 && s.dropped === 0);
+    ok('token 照旧记着', s.requests === 1 && s.prompt > 0);
+  }
+
+  {
+    // 中间留空 → 单独补翻救回来。对齐没坏，只是不干净
+    const { api, store } = load((items, isRepair) => {
+      if (isRepair) return honest2(items);
+      return items.map((l, i) => (i === 2 ? '' : (i + 1) + '|译' + l.split('|')[1])).filter(Boolean).join('\n');
+    });
+    await api.translateBatch({ lines: mk(6) });
+    const s = store.stats;
+    ok('补翻记在 repaired 上', s.repaired === 1, JSON.stringify(s));
+    ok('补翻不算错位', s.dirty === 0 && s.split === 0 && s.dropped === 0);
+  }
+
+  {
+    // 少还一行且缺口在末尾 → edgeGap，整块对半拆
+    const { api, store } = load((items, isRepair, n) =>
+      (n === 1 ? items.slice(0, items.length - 1).map((l, i) => (i + 1) + '|译' + l.split('|')[1]).join('\n')
+               : honest2(items)));
+    await api.translateBatch({ lines: mk(6) });
+    const s = store.stats;
+    ok('拆过块就记成错位', s.dirty === 1 && s.split > 0, JSON.stringify(s));
+    ok('批数仍然只加一', s.batches === 1);
+  }
+
+  {
+    // 401：跟对齐毫无关系，一个字都不许记
+    const { api, store } = load(honest2, () => ({ status: 401, body: '{"error":{"message":"bad key"}}' }));
+    const r = await api.translateBatch({ lines: mk(6) });
+    ok('鉴权失败当然是失败的', r.ok === false);
+    ok('但不进对齐统计', !store.stats || !store.stats.batches, JSON.stringify(store.stats));
+  }
+
+  {
+    // 服务商不回报 usage，对齐的账照记不误 —— 恰恰是这种时候更需要它
+    const { api, store } = load(honest2, null, true);
+    await api.translateBatch({ lines: mk(6) });
+    const s = store.stats;
+    ok('没有 usage 也记下了批数', s && s.batches === 1, JSON.stringify(s));
+    ok('token 那几项保持不动', s.requests === 0 && s.prompt === 0);
+  }
+
+  {
+    // 两批累加，老 stats 里没有这几个键也不能变成 NaN
+    const { api, store } = load(honest2);
+    store.stats = { requests: 3, prompt: 10, completion: 20, since: 1 };
+    await api.translateBatch({ lines: mk(4) });
+    await api.translateBatch({ lines: mk(4) });
+    const s = store.stats;
+    ok('老 stats 升级后从 0 起算，不是 NaN', s.batches === 2, JSON.stringify(s));
+    ok('原有的 token 计数继续往上加', s.requests === 5 && s.prompt === 12);
+  }
   console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
   process.exit(fail ? 1 : 0);
 })();

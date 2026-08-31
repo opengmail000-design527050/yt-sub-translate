@@ -110,6 +110,54 @@ export async function setSettings(patch) {
 }
 
 /* ------------------------------------------------------------------ *
+ * 接口配置档
+ *
+ * 一套服务商就是一档：地址、Key、模型、译文语言、推理参数写法。
+ * 存在单独的 profiles 键里，settings 仍然是运行时的唯一真相 ——
+ * background 和 content 照旧只读 settings，不需要知道配置档的存在。
+ * 切换配置档 = 把那一档的字段写回 settings，于是 content.js 的 OUTPUT_KEYS
+ * 会照常发现 model/baseUrl/targetLang 变了，把旧译文作废掉。
+ * ------------------------------------------------------------------ */
+
+/** 属于配置档的字段。这几个之外的设置（外观、缓存、省 token）是全局的。 */
+export const PROFILE_KEYS = ['baseUrl', 'apiKey', 'model', 'targetLang', 'reasoningStyle'];
+
+export function newProfileId() {
+  return 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+/** 从一份设置里摘出配置档字段 */
+export function pickProfile(src) {
+  const o = {};
+  for (const k of PROFILE_KEYS) o[k] = src && src[k] !== undefined ? src[k] : DEFAULTS[k];
+  return o;
+}
+
+/**
+ * 读配置档。老用户没有 profiles 键，就拿他当前的设置原地立一档「默认」，
+ * 不动他任何一个字段 —— 升级之后打开设置页，看到的必须和升级前一模一样。
+ */
+export async function getProfiles() {
+  const got = await chrome.storage.local.get('profiles');
+  const p = got.profiles;
+  if (p && Array.isArray(p.list) && p.list.length) {
+    // active 指向一个已经被删掉的 id 时兜底回第一档
+    const active = p.list.some((x) => x.id === p.active) ? p.active : p.list[0].id;
+    return { active, list: p.list };
+  }
+  const s = await getSettings();
+  const one = Object.assign({ id: newProfileId(), name: '默认' }, pickProfile(s));
+  const fresh = { active: one.id, list: [one] };
+  await chrome.storage.local.set({ profiles: fresh });
+  return fresh;
+}
+
+export async function saveProfiles(p) {
+  await chrome.storage.local.set({ profiles: p });
+  return p;
+}
+
+/* ------------------------------------------------------------------ *
  * 自定义 API 地址的可选权限
  * manifest 只静态声明了 youtube 和 api.openai.com；填别的地址时按需申请，
  * 免得安装时就向用户要「所有网站」的权限。

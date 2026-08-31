@@ -102,5 +102,60 @@ console.log('\n[4] 连续说话时不该被切出空档');
         JSON.stringify(segs));
 }
 
+console.log('\n[5] 自动字幕（无标点）不能按 cue 边界切');
+{
+  /* YouTube 的自动字幕一条 cue 只有两三个词，而 cue 边界只是「每两三个词换一屏」
+     的显示节奏。修复前这里拿它当句子边界，每一句都被切在半截上、平均只有 33 字符，
+     模型拿到的全是残缺短语。现在只在真的停顿处断开。 */
+  const words = ('so the question I keep coming back to is what intelligence really is and whether '
+    + 'we would even recognise it if we saw it in a machine because the definitions we have are '
+    + 'circular and honestly not very useful when you try to apply them').split(' ');
+  const evs = [];
+  // 滚动字幕：每条 cue 三个词，首尾严格相接，中间没有任何停顿
+  for (let i = 0; i < words.length; i += 3) evs.push(cue((i / 3) * 1500, 1500, words.slice(i, i + 3).join(' ')));
+
+  const segs = segsOf(evs);
+  const lens = segs.map((s) => s.text.length);
+  const avg = lens.reduce((a, b) => a + b, 0) / segs.length;
+
+  check('段数远少于 cue 数', segs.length < evs.length / 4, segs.length + ' 段 / ' + evs.length + ' 条 cue');
+  check('平均长度到得了 80 字符以上（修复前只有 33）', avg > 80, '平均 ' + Math.round(avg) + ' 字符');
+  check('没有短到只剩几个词的碎片', Math.min(...lens) > 40, JSON.stringify(lens));
+  check('原文一个字都没丢', segs.map((s) => s.text).join(' ') === words.join(' '),
+        JSON.stringify(segs.map((s) => s.text)));
+  check('时间严格递增且不重叠',
+        segs.every((s, i) => s.end > s.start && (i === 0 || s.start >= segs[i - 1].end - 0.01)),
+        JSON.stringify(segs.map((s) => [s.start.toFixed(1), s.end.toFixed(1)])));
+}
+
+console.log('\n[6] 无标点时，真的停顿了还是要断开');
+{
+  const evs = [
+    cue(0, 1500, 'okay so here is'), cue(1500, 1500, 'the first thought'),
+    cue(3000, 1500, 'I wanted to share'),
+    // 4.5 秒说完，下一句 8 秒才开口 —— 中间 3.5 秒静音
+    cue(8000, 1500, 'and now something'), cue(9500, 1500, 'completely different')
+  ];
+  const segs = segsOf(evs);
+  check('停顿处断成了两段', segs.length === 2, JSON.stringify(segs.map((s) => s.text)));
+  check('第二段从静音之后才开始', segs[1] && segs[1].start > 7, JSON.stringify(segs.map((s) => s.start)));
+  check('第一段没被拖到静音里', segs[0] && segs[0].end < 7, JSON.stringify(segs.map((s) => s.end)));
+}
+
+console.log('\n[7] 有标点的轨不受影响：仍按句号切');
+{
+  /* 句子都写得够长，避免被 MIN_CHARS 那条「太短就并进下一句」的规则合并掉 ——
+     那是原有行为，跟这次改动无关。 */
+  const segs = segsOf([
+    cue(0, 2000, 'So the question I keep'), cue(2000, 2000, 'coming back to is what intelligence really is.'),
+    cue(4000, 2000, 'That turns out to be a much harder'), cue(6000, 2000, 'question than anybody expected.')
+  ]);
+  check('按句号切成两句', segs.length === 2, JSON.stringify(segs.map((s) => s.text)));
+  check('每句都以句号结尾', segs.every((s) => /[.!?]$/.test(s.text)), JSON.stringify(segs.map((s) => s.text)));
+  check('切在句号处而不是 cue 边界',
+        segs[0].text === 'So the question I keep coming back to is what intelligence really is.',
+        JSON.stringify(segs[0].text));
+}
+
 console.log('\n结果：' + pass + ' 通过 / ' + fail + ' 失败');
 process.exit(fail ? 1 : 0);

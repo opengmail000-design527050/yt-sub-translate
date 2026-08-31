@@ -1,4 +1,4 @@
-/* YT 字幕译 —— 内容脚本（隔离世界）
+/* Sub Translator —— 内容脚本（隔离世界）
  * 负责：注入主世界脚本、拿字幕、切句、按播放头懒翻译、渲染叠加层、播放器按钮。
  */
 (function () {
@@ -112,14 +112,19 @@
     active: false,           // 当前视频翻译是否开启
     userOff: false,          // 用户在本视频手动关过
     rawCues: null,           // 原始 cue，改字幕长度档位时用来重新切句
+    noPunct: false,          // 这一轨的原文没有标点（多半是自动字幕），翻译时要额外提示模型
     segments: [],            // [{id,start,end,text}]
     trans: new Map(),        // id -> 译文
     dropped: new Set(),      // 补翻后模型仍未给出译文的行，只显示原文
     batches: [],             // [{from,to,state:'idle'|'run'|'done'|'err'}]
+    batchTier: 0,            // 当前批次档位，见 BATCH_TIERS
+    batchCeil: 0,            // 本视频还允许升到哪一档（出过错位就往下压，不再回去）
+    batchClean: 0,           // 连续几批干干净净了
     running: 0,
     status: 'idle',          // idle | waiting | ready | translating | error | nosub
     error: '',
     curIdx: -1,
+    settleAt: 0,             // 拖动进度条后，等到这个时刻才允许再调度（见 SEEK_SETTLE）
     cache: null,             // { items: {hash: text} }
     cacheDirty: false,
     /* 「这一版」的编号：切视频、重新切句、改了影响译文的设置都会 +1。
@@ -279,6 +284,9 @@
 
     // 全角句号后面通常不跟空格，所以单独判
     const hasPunct = /[。！？]|[.!?]["'’”)\]]?(\s|$)/.test(full.slice(0, 4000));
+    /* 给翻译请求带上。用「有没有标点」而不是「是不是 asr 轨」来判断：
+       有些自动字幕带标点（不需要额外提示），有些人工上传的反而不带（需要）。 */
+    st.noPunct = !hasPunct;
 
     // 1. 先切成句子（无标点的自动字幕退回按 cue 边界分组）
     let pieces = [];
@@ -292,7 +300,27 @@
       }
       if (last < full.length && full.slice(last).trim()) pieces.push({ s: last, e: full.length });
     } else {
-      for (const mk of marks) pieces.push({ s: mk.pos, e: mk.pos + mk.len });
+      /* 自动字幕没有标点。以前这里拿 cue 边界当句子边界 —— 可 cue 边界只是
+       * 「每两三个词换一屏」的显示节奏，跟语义毫无关系，于是每一句都被切在
+       * 半截上（"so the question I keep coming" / "back to is what intelligence
+       * really"），模型只能照着半截短语硬翻，而系统提示又明令禁止它跨行搬运语义。
+       *
+       * 改成只在「真的停顿了」的地方断开：前面已经把重叠的 cue 时长削平，
+       * 滚动字幕的相邻 cue 因此严格首尾相接，gap 只会出现在真实的静音处。
+       * 断不开的长句交给下面第 2 步，它会优先切在 and / because / so 这些
+       * 连词前，比按显示节奏乱切近得多。 */
+      const PAUSE = 0.45;
+      let s0 = marks[0].pos, prevEnd = marks[0].end;
+      for (let i = 1; i < marks.length; i++) {
+        const mk = marks[i];
+        if (mk.start - prevEnd > PAUSE) {
+          const prev = marks[i - 1];
+          pieces.push({ s: s0, e: prev.pos + prev.len });
+          s0 = mk.pos;
+        }
+        prevEnd = mk.end;
+      }
+      pieces.push({ s: s0, e: full.length });
     }
 
     // 2. 只有真的过长才切，而且尽量只在强标点处切。
@@ -375,19 +403,86 @@
     return segs;
   }
 
-  function makeBatches(segments) {
+  /* 批次越大越省：那 250 token 的系统提示是按「次」付的，一批装的句子多一倍，
+   * 摊到每句就少一半；而且同一批里模型能看见更多上下文，术语和语气反而更稳。
+   *
+   * 唯一的代价是错位风险 —— 行数一多，模型更容易把相邻两句并成一句，那一批就得
+   * 整个作废重来，反而更贵。所以不写死，从用户设的档位起步，连续几批没出问题
+   * 就往上加，一出问题立刻回落并且封顶，不再试那一档。 */
+  const BATCH_TIERS = [1, 1.5, 2];
+  const TIER_PROMOTE_AFTER = 3;   // 连续这么多批毫无瑕疵，才敢加大
+
+  function tierLimits() {
+    const k = BATCH_TIERS[Math.min(st.batchTier, BATCH_TIERS.length - 1)] || 1;
+    return {
+      chars: Math.max(200, Math.round(S.batchChars * k)),
+      lines: Math.max(4, Math.round(S.batchLines * k))
+    };
+  }
+
+  /** 切出 [from, 末尾] 这一段的批次。from 省略就是整条重切。 */
+  function makeBatches(segments, from) {
+    const lim = tierLimits();
     const batches = [];
-    let from = 0, chars = 0, count = 0;
-    for (let i = 0; i < segments.length; i++) {
+    let start = from || 0, chars = 0, count = 0;
+    for (let i = start; i < segments.length; i++) {
       chars += wid(segments[i].text);
       count += 1;
       const last = i === segments.length - 1;
-      if (last || chars >= S.batchChars || count >= S.batchLines) {
-        batches.push({ from, to: i, state: 'idle' });
-        from = i + 1; chars = 0; count = 0;
+      if (last || chars >= lim.chars || count >= lim.lines) {
+        batches.push({ from: start, to: i, state: 'idle' });
+        start = i + 1; chars = 0; count = 0;
       }
     }
     return batches;
+  }
+
+  /* 换档之后重切还没翻的那一截。
+   *
+   * 只动「后面全是 idle」的那条尾巴：done 的边界一改，applyCacheToAll 之外
+   * 就没人知道它翻过了；run 的更不能动，在途结果按 id 回填，边界变了会对不上。
+   * 译文和缓存都是按句子 id / 原文哈希存的，跟批次边界无关，所以重切是安全的。 */
+  function rebuildTail() {
+    let k = st.batches.length;
+    while (k > 0 && st.batches[k - 1].state === 'idle') k--;
+    if (k >= st.batches.length) return;        // 没有可以重切的尾巴
+    const from = st.batches[k].from;
+    st.batches.length = k;
+    for (const b of makeBatches(st.segments, from)) {
+      let done = true;
+      for (let j = b.from; j <= b.to; j++) if (!st.trans.has(j)) { done = false; break; }
+      if (done) b.state = 'done';              // 整批都在缓存里
+      st.batches.push(b);
+    }
+  }
+
+  function resetTier() {
+    st.batchTier = 0;
+    st.batchCeil = BATCH_TIERS.length - 1;
+    st.batchClean = 0;
+  }
+
+  /**
+   * 一批回来之后调整档位。
+   *   bad   —— 出现了错位（后端拆过块，或有行到底也没翻出来）
+   *   clean —— 一次就整整齐齐，没补翻也没拆块
+   * 网络错误、401、超时跟批次大小无关，两个都传 false，档位不动。
+   */
+  function noteBatchResult(bad, clean) {
+    if (bad) {
+      st.batchClean = 0;
+      if (st.batchTier > 0) st.batchTier--;
+      // 出过一次事，这一档以上就再也不试了（tier 已经是 0 的话，本视频就此锁死）
+      st.batchCeil = Math.min(st.batchCeil, st.batchTier);
+      rebuildTail();
+      return;
+    }
+    if (!clean) { st.batchClean = 0; return; }
+    if (st.batchTier >= st.batchCeil) return;
+    if (++st.batchClean < TIER_PROMOTE_AFTER) return;
+    st.batchClean = 0;
+    st.batchTier++;
+    rebuildTail();
   }
 
   /* ------------------------------------------------------------------ *
@@ -405,7 +500,7 @@
       S.reasoningStyle || '',
       String(S.temperature === null || S.temperature === undefined ? '' : S.temperature),
       String(S.maxTokens === null || S.maxTokens === undefined ? '' : S.maxTokens),
-      S.useContext ? 'ctx' : '',
+      S.useContext ? 'ctx2' : '',
       String(S.extraPrompt || '').trim()
     ].join('|');
   }
@@ -498,8 +593,22 @@
     return hit;
   }
 
+  /* 播放头一次跳过这么多句，就认定是拖进度条／连按方向键，而不是正常播放 */
+  const SEEK_JUMP = 5;
+  /* 跳完之后等这么久没有再跳，才真的开始翻 */
+  const SEEK_SETTLE = 1200;
+
   function schedule() {
     if (!st.active || !st.segments.length || !settingsReady) return;
+    /* 还在拖动中：一个请求都不发。
+     *
+     * 以前 render 里播放头一换句就立刻 schedule，而拖进度条时播放头会连续落在
+     * 十几个位置上，每个落点都按 concurrency 发满请求 —— 用户从头拖到尾，
+     * 整条视频就被零零散散翻了一遍，而他一句都没看。
+     *
+     * 顺序播放时 curIdx 每次只 +1，跳变判定不成立，走不到这里。 */
+    if (st.settleAt && Date.now() < st.settleAt) return;
+    st.settleAt = 0;
     const idx = st.curIdx >= 0 ? st.curIdx : 0;
     const limit = idx + Math.max(5, S.lookahead);
 
@@ -514,6 +623,11 @@
     }
     updateStatus();
   }
+
+  /* 往前、往后各多数几句当参考。这里只管备齐候选，真正发多少由 background 按
+   * 字符预算裁 —— 句子长短差得很远，按句数卡预算卡不准。 */
+  const CTX_PREV_LINES = 6;
+  const CTX_NEXT_LINES = 4;
 
   async function runBatch(bi) {
     const b = st.batches[bi];
@@ -547,17 +661,31 @@
 
     if (!lines.length) { b.state = 'done'; st.running--; schedule(); return; }
 
-    let context = '';
-    if (S.useContext && b.from > 0) {
-      const prev = st.segments[b.from - 1];
-      if (prev) context = prev.text.slice(-220);
+    /* 参考上下文。以前只带前一句原文，可访谈里前一句很可能就是「Right.」，等于
+     * 没带；批尾那一句更是整批里唯一看不见下文的一行，无标点的轨按停顿切，它
+     * 很可能是半截话。
+     *
+     * 所以两头都给：前面连译文一起给（模型看见自己上一批把 agent 译成了什么，
+     * 术语和人称才跨批一致），后面只给原文，它们还没翻。这里只管备齐候选 ——
+     * 裁多少、有标点的轨要不要发后文，都由 background 的 refBlocks 决定。 */
+    const prev = [], next = [];
+    if (S.useContext) {
+      for (let i = Math.max(0, b.from - CTX_PREV_LINES); i < b.from; i++) {
+        const seg = st.segments[i];
+        if (seg) prev.push({ text: seg.text, tr: st.trans.get(i) || '' });
+      }
+      const end = Math.min(st.segments.length - 1, b.to + CTX_NEXT_LINES);
+      for (let i = b.to + 1; i <= end; i++) {
+        const seg = st.segments[i];
+        if (seg) next.push(seg.text);
+      }
     }
 
     let res = null, err = '';
     try {
       res = await chrome.runtime.sendMessage({
         type: 'translateBatch',
-        payload: { lines, context, sourceLang: st.sourceLang }
+        payload: { lines, prev, next, title: st.title, sourceLang: st.sourceLang, noPunct: st.noPunct }
       });
     } catch (e) {
       err = String((e && e.message) || e);
@@ -573,7 +701,15 @@
     if (err) {
       b.state = 'err';
       st.error = err;
+      noteBatchResult(false, false);   // 网络层的错，跟批次大小无关
     } else if (res && res.ok) {
+      /* split > 0 = 后端因为错位对半重来过；dropped 非空 = 有行到底也没翻出来。
+       * 两者都说明这一批给大了。repaired > 0 是模型留了空、补翻救回来了，
+       * 对齐没坏，但也不算干净，只是不再往上加档。 */
+      noteBatchResult(
+        Number(res.split || 0) > 0 || (res.dropped && res.dropped.length > 0),
+        !res.split && !(res.dropped && res.dropped.length) && !res.repaired
+      );
       let got = 0;
       for (const k in res.map) {
         const id = Number(k);
@@ -604,6 +740,8 @@
     } else {
       b.state = 'err';
       st.error = (res && res.error) || '翻译失败';
+      // 整批失败：只有拆到底还在错位才算批次太大，401/超时之类不算
+      noteBatchResult(Number((res && res.split) || 0) > 0, false);
     }
 
     render();
@@ -641,8 +779,10 @@
     st.cache = { items: {} };
     st.cacheDirty = false;
     st.error = '';
+    resetTier();
     st.batches = st.segments.length ? makeBatches(st.segments) : [];
     st.curIdx = -1;
+    st.settleAt = 0;
     if (st.videoId) {
       try {
         const k = cacheKey(st.videoId);
@@ -983,7 +1123,15 @@
     overlay.classList.remove('ytst-hidden');
 
     const idx = findIndex(v.currentTime);
-    if (idx !== st.curIdx) { st.curIdx = idx; schedule(); }
+    if (idx !== st.curIdx) {
+      // 跳着走的先记下时刻、不调度；顺着走的照旧立刻调度
+      const jumped = st.curIdx >= 0 && idx >= 0 && Math.abs(idx - st.curIdx) > SEEK_JUMP;
+      st.curIdx = idx;
+      if (jumped) st.settleAt = Date.now() + SEEK_SETTLE;
+      else schedule();
+    } else if (st.settleAt && Date.now() >= st.settleAt) {
+      schedule();   // 停稳了，补上这一次
+    }
 
     // 正在选中框内文字时不刷新内容，让你把这句复制走
     const frozen = selectionInBox();
@@ -1069,6 +1217,7 @@
     }
     st.active = true;
     st.userOff = false;
+    st.settleAt = 0;
     document.documentElement.classList.toggle('ytst-hide-native', !!S.hideNative);
     syncButton();
     if (!st.segments.length) requestTrack();
@@ -1132,8 +1281,10 @@
     st.segments = [];
     st.trans = new Map();
     st.dropped = new Set();
+    resetTier();
     st.batches = [];
     st.curIdx = -1;
+    st.settleAt = 0;
     st.error = '';
     st.status = 'idle';
     st.trackRequested = false;
@@ -1266,6 +1417,7 @@
       st.trans = new Map();
       st.dropped = new Set();
       st.curIdx = -1;
+      st.settleAt = 0;
       st.error = '';
     }
     st.trackSig = sig;
@@ -1283,6 +1435,7 @@
     st.rawCues = cues;                       // 留着，改字幕长度档位时不用重新拉字幕
     st.segments = buildSegments(cues);
     if (!st.segments.length) { st.status = 'nosub'; renderStatusChip(); return; }
+    resetTier();
     st.batches = makeBatches(st.segments);
 
     /* 用户挑的这条轨本来就是目标语言（比如直接选了中文字幕）：再翻一遍既费钱、
@@ -1305,8 +1458,10 @@
     st.segments = buildSegments(st.rawCues);
     st.trans = new Map();
     st.dropped = new Set();
+    resetTier();
     st.batches = makeBatches(st.segments);
     st.curIdx = -1;
+    st.settleAt = 0;
     applyCacheToAll();
     if (st.active) { schedule(); render(); }
     updateStatus();
@@ -1432,6 +1587,7 @@
     if (OUTPUT_KEYS.some((k) => S[k] !== old[k])) { await invalidateTranslations(); return; }
 
     if (st.segments.length && BATCH_KEYS.some((k) => S[k] !== old[k])) {
+      resetTier();            // 用户重新设了基准，之前压下去的档位不算数了
       st.batches = makeBatches(st.segments);
       applyCacheToAll();
     }
@@ -1449,6 +1605,7 @@
     st.error = '';
     st.cacheDirty = false;      // 没落盘的旧译文属于旧配置，别写了
     st.cache = null;
+    resetTier();
     st.batches = st.segments.length ? makeBatches(st.segments) : [];
 
     if (st.videoId && st.segments.length) {

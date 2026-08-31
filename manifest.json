@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "YT 字幕译",
+  "name": "Sub Translator",
   "version": "0.1.0",
   "description": "YouTube 英文字幕双语翻译，为 Lex Fridman / Joe Rogan 等长访谈与科技播客优化。",
   "minimum_chrome_version": "116",
@@ -28,7 +28,7 @@
   ],
   "action": {
     "default_popup": "popup/popup.html",
-    "default_title": "YT 字幕译",
+    "default_title": "Sub Translator",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",

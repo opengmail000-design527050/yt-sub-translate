@@ -2,18 +2,32 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <title>YT 字幕译 · 设置</title>
+  <title>Sub Translator · 设置</title>
   <link rel="stylesheet" href="options.css">
 </head>
 <body>
 <main>
   <header class="page-head">
-    <div class="brand"><span class="mark">译</span><h1>YT 字幕译</h1></div>
+    <div class="brand"><img class="mark" src="../icons/icon48.png" alt=""><h1>Sub Translator</h1></div>
     <p class="sub">只做一件事：把 YouTube 的英文字幕，变成能一眼看懂的中文。</p>
   </header>
 
   <section class="card">
     <h2>模型与接口</h2>
+
+    <div class="field">
+      <label for="profileSel">配置</label>
+      <div class="profileBar">
+        <select id="profileSel"></select>
+        <input id="profileName" type="text" class="hidden" spellcheck="false" maxlength="40"
+               placeholder="给这套配置起个名字">
+        <button class="mini" id="pfRename" type="button">重命名</button>
+        <button class="mini" id="pfNew" type="button">新建</button>
+        <button class="mini" id="pfCopy" type="button">复制</button>
+        <button class="mini danger" id="pfDel" type="button">删除</button>
+      </div>
+      <p class="note">这张卡片里的五项（地址、Key、模型、译文语言、推理参数写法）都属于当前配置，改了自动存进去。切换配置立刻生效——已经翻好的字幕会作废重翻，因为换了模型就是另一套译文。其余设置（外观、缓存、省 token）是全局的，不随配置走。</p>
+    </div>
 
     <div class="field">
       <label for="baseUrl">API 地址</label>
@@ -75,14 +89,12 @@
       <button class="primary" id="testBtn" type="button">测试连接</button>
       <span class="testOut" id="testOut"></span>
     </div>
+    <div class="testDetail hidden" id="testDetail"></div>
   </section>
 
   <section class="card">
     <h2>省 token</h2>
-    <p class="lead">分批、预翻译范围和并发都已经按「长播客」调好，不再单独暴露：整句合并后再翻，只翻播放头之后的部分，看过的存缓存。</p>
-
-    <label class="check"><input type="checkbox" id="useContext"><span>带上一句原文做上下文<em>（连贯性更好，每批多约 30 token）</em></span></label>
-    <label class="check"><input type="checkbox" id="useCache"><span>缓存翻译结果<em>（存在本地磁盘，刷新页面、关标签、重启浏览器都不会丢）</em></span></label>
+    <p class="lead">分批、预翻译范围、并发都已经按「长播客」调好，不再单独暴露：整句合并后再翻，只翻播放头之后的部分，批次翻顺了会自己变大，拖进度条时不翻。每批前后各带几句原文和已有译文保证连贯、译文缓存到本地，这两项一直开着——关掉只会更贵更难看，所以不给开关。</p>
 
     <div class="grid2">
       <div class="field">

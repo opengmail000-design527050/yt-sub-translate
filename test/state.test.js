@@ -435,6 +435,54 @@ const check = (name, cond, extra) => {
   check('来路不明的不收', m.segments === 0, JSON.stringify(m));
   check('也没拿它去翻译', !seen.some((t) => t.includes('Xray')), '送出 ' + seen.length + ' 行');
 
+  console.log('\n[18] 送出去的参考上下文');
+  {
+    /* 并发压到 1，一批一批地翻 —— 第二批发出去的时候第一批已经落进 st.trans，
+       前文才带得上译文。 */
+    const sent = [];
+    runtimeReply = async (m) => {
+      sent.push(m.payload);
+      return { ok: true, map: Object.fromEntries(m.payload.lines.map((l) => [l.id, '译:' + l.id])), dropped: [] };
+    };
+    await chrome.storage.local.set({
+      settings: { targetLang: '简体中文', apiKey: 'x', concurrency: 1, useCache: false,
+                  batchLines: 5, batchChars: 100000, useContext: true, extraPrompt: 'ctxcase' }
+    });
+    await sleep(30);
+    toPage('player', { videoId: 'N', title: 'Rust 所有权入门', audioLang: 'en',
+                       tracks: [{ languageCode: 'en', kind: 'asr' }] });
+    await sleep(30);
+    sent.length = 0;
+    toPage('track', { videoId: 'N', body: track(20, 'Yankee') });
+    await sleep(300);
+
+    const idOf = (t) => Number((String(t).match(/number (\d+)/) || [])[1]);
+    const firstId = (p) => p.lines[0].id;
+    const lastId = (p) => p.lines[p.lines.length - 1].id;
+
+    check('确实翻了不止一批', sent.length > 1, '共 ' + sent.length + ' 批');
+    check('每批都带上了视频标题', sent.every((p) => p.title === 'Rust 所有权入门'),
+          JSON.stringify(sent.map((p) => p.title)));
+
+    check('第一批没有前文', sent[0].prev.length === 0, JSON.stringify(sent[0].prev));
+    check('第一批已经有后文了', sent[0].next.length > 0);
+
+    const later = sent.find((p) => p.prev.length > 0);
+    check('后面的批次带上了前文', !!later);
+    check('前文最多 6 句', later.prev.length <= 6, '带了 ' + later.prev.length + ' 句');
+    check('后文最多 4 句', later.next.length <= 4, '带了 ' + later.next.length + ' 句');
+    check('前文里带着已经翻好的译文', later.prev.some((x) => x.tr), JSON.stringify(later.prev.slice(-2)));
+    check('前文紧挨着本批第一行', idOf(later.prev[later.prev.length - 1].text) === firstId(later) - 1,
+          JSON.stringify({ prev: later.prev[later.prev.length - 1].text, first: firstId(later) }));
+    check('后文紧接着本批最后一行', idOf(later.next[0]) === lastId(later) + 1,
+          JSON.stringify({ next: later.next[0], last: lastId(later) }));
+    check('前文一路排到本批开头，中间不跳句',
+          later.prev.every((x, i) => idOf(x.text) === firstId(later) - later.prev.length + i));
+
+    const last = sent[sent.length - 1];
+    check('最后一批没有后文', last.next.length === 0, JSON.stringify(last.next));
+  }
+
   console.log('\n结果：' + pass + ' 通过 / ' + fail + ' 失败');
   process.exit(fail ? 1 : 0);
 })();
