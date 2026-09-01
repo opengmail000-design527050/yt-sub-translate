@@ -12,7 +12,7 @@ const ok = (name, cond, extra) => {
 function load(reply, http, noUsage, usageOverride) {
   const src = fs.readFileSync(__dirname + '/../background.js', 'utf8')
     .replace(/^import .*$/m, '')
-    + '\nglobalThis.__t = { translateBatch, edgeGap, repairHead, strictHead, asrLines };';
+    + '\nglobalThis.__t = { translateBatch, edgeGap, repairHead, strictHead, asrLines, cancelJobs };';
 
   const calls = [];
   const store = {};
@@ -375,6 +375,58 @@ const mergeAt = (k) => (items) => {
     ok('回报了 0：命中数 0 但确实回报过', s.cached === 0 && s.cachedReports === 1,
        JSON.stringify({ cached: s.cached, reports: s.cachedReports }));
   }
+  console.log('\n[9] 批次被取消之后，一跳都不许再发');
+  {
+    /* 内容脚本那边 epoch 一涨（切视频、换轨、改设置），这一批就不作数了。
+       以前这里只做到「结果不采用」：fetch 照跑，跑完还接着 strict 重问、repair 补翻、
+       错位拆块 —— 并发 3 时一次切视频最多白付十来次请求，还占着下一个视频的额度。 */
+    let api = null;
+    const r = load((items, isRepair, n) => {
+      if (n === 1) api.cancelJobs(9, { epoch: 3 });     // 第一次请求刚发出，用户切了视频
+      return mergeAt(6)(items);                          // 合并两行 → 正常情况下会拆块重来
+    });
+    api = r.api;
+    const res = await api.translateBatch({ lines: mk(20), epoch: 2, batchId: 1 }, 9);
+    ok('取消之后一次都没有再发', r.calls.length === 1, '共发了 ' + r.calls.length + ' 次');
+    ok('报回去的是「已取消」而不是失败', res.ok === false && res.cancelled === true, JSON.stringify(res));
+  }
+
+  console.log('\n[10] 只掐旧的那几版，当前这一版照跑');
+  {
+    let api = null;
+    const r = load((items, isRepair, n) => {
+      if (n === 1) api.cancelJobs(9, { epoch: 2 });     // 掐的是「比第 2 版旧的」
+      return mergeAt(6)(items);
+    });
+    api = r.api;
+    await api.translateBatch({ lines: mk(20), epoch: 2, batchId: 1 }, 9);
+    ok('第 2 版自己不在作废范围里，照常拆块重来', r.calls.length > 1, '共发了 ' + r.calls.length + ' 次');
+  }
+
+  console.log('\n[11] 别的标签页切视频，不影响这个标签页');
+  {
+    let api = null;
+    const r = load((items, isRepair, n) => {
+      if (n === 1) api.cancelJobs(7, { epoch: 99 });    // 7 号标签页的事
+      return mergeAt(6)(items);
+    });
+    api = r.api;
+    await api.translateBatch({ lines: mk(20), epoch: 2, batchId: 1 }, 9);
+    ok('9 号标签页的批次照常走完', r.calls.length > 1, '共发了 ' + r.calls.length + ' 次');
+  }
+
+  console.log('\n[12] 点名掐一批（内容脚本的兜底超时）');
+  {
+    let api = null;
+    const r = load((items, isRepair, n) => {
+      if (n === 1) api.cancelJobs(9, { epoch: 2, batchId: 5 });
+      return mergeAt(6)(items);
+    });
+    api = r.api;
+    await api.translateBatch({ lines: mk(20), epoch: 2, batchId: 5 }, 9);
+    ok('点到名的那一批立刻停', r.calls.length === 1, '共发了 ' + r.calls.length + ' 次');
+  }
+
   console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
   process.exit(fail ? 1 : 0);
 })();

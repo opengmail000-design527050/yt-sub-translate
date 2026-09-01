@@ -44,7 +44,13 @@ let runtimeReply = null;
 const chrome = {
   runtime: {
     getURL: (p) => 'chrome-extension://x/' + p,
-    sendMessage: async (m) => { sent.push(m); return runtimeReply ? runtimeReply(m) : { ok: false, error: 'stub' }; },
+    /* 桩要像 background 一样按消息类型分流：cancel 是「把这一版的在途请求掐掉」的
+       通知，跟译文回调毫无关系，交给 runtimeReply 会打乱用例自己的计数。 */
+    sendMessage: async (m) => {
+      sent.push(m);
+      if (m && m.type === 'cancel') return { ok: true, aborted: 0 };
+      return runtimeReply ? runtimeReply(m) : { ok: false, error: 'stub' };
+    },
     onMessage: { _l: [], addListener(f) { this._l.push(f); } }
   },
   storage: {

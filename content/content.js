@@ -149,6 +149,7 @@
     batchClean: 0,           // 连续几批干干净净了
     batchDirty: 0,           // 连续几批出了错位（连着两批才封顶，见 noteBatchResult）
     running: 0,
+    batchSeq: 0,             // 每发出一批就给它一个编号，兜底超时时按它点名取消
     status: 'idle',          // idle | waiting | ready | translating | error | nosub
     error: '',
     curIdx: -1,
@@ -653,6 +654,25 @@
   /* ------------------------------------------------------------------ *
    * 翻译调度
    * ------------------------------------------------------------------ */
+  /* 这一版作废了。
+   *
+   * epoch 涨一格原来只做到「回来的结果不采用」，可 background 那边的 fetch 还在跑，
+   * 跑完还会接着走 strict 重问、repair 补翻、错位拆块 —— 并发 3 时一次切视频最多
+   * 白付十来次请求，而且这些请求还占着下一个视频的并发额度。
+   * 所以涨的同时告诉 background 一声，让它把旧批次真的掐掉。 */
+  function bumpEpoch() {
+    st.epoch++;
+    cancelInflight({ epoch: st.epoch });
+  }
+
+  /** payload: { epoch } 作废比它旧的全部批次；{ epoch, batchId } 只作废那一批 */
+  function cancelInflight(payload) {
+    try {
+      const p = chrome.runtime.sendMessage({ type: 'cancel', payload });
+      if (p && p.catch) p.catch(() => {});
+    } catch (_) {}
+  }
+
   function applyCacheToAll() {
     let hit = 0;
     for (const seg of st.segments) {
@@ -816,6 +836,32 @@
   const CTX_PREV_LINES = 6;
   const CTX_NEXT_LINES = 4;
 
+  /* 一批最多等这么久。
+   *
+   * MV3 的 service worker 空闲三十秒就可能被回收，而一批翻译在慢接口上跑六十秒
+   * 是常事。万一回收发生在响应回来之前，sendMessage 的 promise 永远不会 settle——
+   * 这一批就永久停在 run，running 计数不减，并发额度从此少一个；攒够三次整个视频
+   * 停摆，而屏幕上什么都不会说，用户只看到字幕不再更新。
+   *
+   * 所以不管后台那边出了什么事，到点就把这批打回 err、把额度还回去，顺带让
+   * background 把它掐掉（万一它还活着，别让它继续烧钱）。比接口自己的 90 秒超时
+   * 留出一截余量，正常的慢请求仍然由那一层先接住、报得更准。 */
+  const BATCH_DEADLINE = 120000;
+
+  function withDeadline(p, ms) {
+    return new Promise((resolve, reject) => {
+      const t = setTimeout(() => {
+        const e = new Error('后台一直没有回应，这一批先放弃了（可以点重试）');
+        e.timeout = true;
+        reject(e);
+      }, ms);
+      Promise.resolve(p).then(
+        (v) => { clearTimeout(t); resolve(v); },
+        (e) => { clearTimeout(t); reject(e); }
+      );
+    });
+  }
+
   async function runBatch(bi) {
     const b = st.batches[bi];
     if (!b || b.state !== 'idle') return;
@@ -868,14 +914,24 @@
       }
     }
 
+    /* epoch 和批次编号一起送过去：background 按 (标签页, epoch, 批次) 登记这次请求，
+     * 切视频时按 epoch 一次掐掉一整版，兜底超时时按批次编号点名掐一个。 */
+    const batchId = ++st.batchSeq;
     let res = null, err = '';
     try {
-      res = await chrome.runtime.sendMessage({
+      res = await withDeadline(chrome.runtime.sendMessage({
         type: 'translateBatch',
-        payload: { lines, prev, next, title: st.title, sourceLang: st.sourceLang, noPunct: st.noPunct }
-      });
+        payload: {
+          lines, prev, next, title: st.title,
+          sourceLang: st.sourceLang, noPunct: st.noPunct,
+          epoch, batchId
+        }
+      }), BATCH_DEADLINE);
     } catch (e) {
       err = String((e && e.message) || e);
+      /* 这一版还作数才点名去掐。已经切走的那些，上面 bumpEpoch 时已经按 epoch
+       * 一次全掐过了，再点一次名只是多一条消息。 */
+      if (e && e.timeout && epoch === st.epoch) cancelInflight({ epoch, batchId });
     }
 
     st.running--;   // 名额先还回去，不管这批还算不算数
@@ -884,6 +940,10 @@
      * 直接丢弃 —— 尤其不能写缓存，st.segments 可能已经是另一个视频的，
      * 那会把旧视频的译文按新视频的原文哈希存起来，重看时永久错乱。 */
     if (epoch !== st.epoch) return;
+
+    /* background 说这一批被取消了。走到这里说明取消不是因为切视频（那样 epoch 对不上，
+     * 上面就返回了），而是我们自己的兜底超时掐的 —— 打回 idle，重试时照常再来一次。 */
+    if (res && res.cancelled) { b.state = 'idle'; updateStatus(); return; }
 
     if (err) {
       b.state = 'err';
@@ -960,7 +1020,7 @@
    * 重试按钮也救不回来（runBatch 看到 st.trans 里已经有了就直接跳过这一行）。
    * 这是唯一的出口。 */
   async function purgeCache() {
-    st.epoch++;                 // 在途请求作废，别把旧结果又写回来
+    bumpEpoch();                // 在途请求作废，别把旧结果又写回来
     st.trans = new Map();
     st.dropped = new Set();
     st.cache = { items: {} };
@@ -1470,7 +1530,7 @@
    * ------------------------------------------------------------------ */
   function resetVideo(data) {
     saveCacheNow();
-    st.epoch++;                       // 在途的旧请求从此作废
+    bumpEpoch();                      // 在途的旧请求从此作废
     st.videoId = data.videoId;
     st.title = data.title || '';
     st.audioLang = data.audioLang || '';
@@ -1657,7 +1717,7 @@
     if (!cues || !cues.length) return;
 
     if (switching) {
-      st.epoch++;              // 在途请求带的是旧轨的 segment id，必须作废
+      bumpEpoch();             // 在途请求带的是旧轨的 segment id，必须作废
       st.trans = new Map();
       st.dropped = new Set();
       st.curIdx = -1;
@@ -1706,7 +1766,7 @@
   /** 改了字幕长度档位后重新切句。缓存按原文哈希存，没变的句子仍然直接命中，不会重复花钱。 */
   function resegment() {
     if (!st.rawCues || !st.rawCues.length) return;
-    st.epoch++;              // 分段变了，在途请求带的是旧 segment id，必须作废
+    bumpEpoch();             // 分段变了，在途请求带的是旧 segment id，必须作废
     st.segments = buildSegments(st.rawCues);
     st.trans = new Map();
     st.dropped = new Set();
@@ -1796,6 +1856,7 @@
         error: st.error,
         segments: st.segments.length,
         translated: st.trans.size,
+        running: st.running,
         hasTracks: st.tracks.length > 0
       });
       return true;
@@ -1864,7 +1925,7 @@
    * 不这么做的话，一段字幕会前半截是旧语言、后半截是新语言，
    * 而且旧请求回来还会写进新配置对应的缓存。 */
   async function invalidateTranslations() {
-    st.epoch++;                 // 在途请求回来会被 runBatch 的守卫丢掉
+    bumpEpoch();                // 守卫会丢掉回来的结果，这里再把请求本身掐掉
     st.trans = new Map();
     st.dropped = new Set();
     st.error = '';

@@ -41,7 +41,13 @@ let runtimeReply = null;
 const chrome = {
   runtime: {
     getURL: (p) => 'chrome-extension://x/' + p,
-    sendMessage: async (m) => { sent.push(m); return runtimeReply ? runtimeReply(m) : { ok: false, error: 'stub' }; },
+    /* 桩要像 background 一样按消息类型分流：cancel 是「把这一版的在途请求掐掉」的
+       通知，跟译文回调毫无关系，交给 runtimeReply 会打乱用例自己的计数。 */
+    sendMessage: async (m) => {
+      sent.push(m);
+      if (m && m.type === 'cancel') return { ok: true, aborted: 0 };
+      return runtimeReply ? runtimeReply(m) : { ok: false, error: 'stub' };
+    },
     onMessage: { _l: [], addListener(f) { this._l.push(f); } }
   },
   storage: {
@@ -611,6 +617,76 @@ const check = (name, cond, extra) => {
     await chrome.storage.local.set({ settings: Object.assign({}, storage.settings, { model: 'other-model' }) });
     await sleep(180);
     check('换模型照旧作废重翻', asked.length > 0, '送出 ' + asked.length + ' 行');
+  }
+
+  console.log('\n[22] 切视频要把在途请求真的掐掉，而不是只丢结果');
+  {
+    /* epoch 守卫只做到「回来的结果不采用」，可 background 那边的 fetch 还在跑，
+       跑完还会接着 strict / repair / 拆块。并发 3 时一次切视频最多白付十来次请求，
+       而且这些请求还占着下一个视频的并发额度。 */
+    runtimeReply = async (m) => {
+      if (m.type === 'cacheIndex') return { ok: true, removed: 0 };
+      await sleep(200);        // 一直不回来，模拟慢接口
+      return { ok: true, map: {}, dropped: [] };
+    };
+    await chrome.storage.local.set({
+      settings: { targetLang: '简体中文', apiKey: 'x', concurrency: 3, useCache: false, extraPrompt: 'cancel' }
+    });
+    await sleep(30);
+    toPage('player', { videoId: 'CX1', title: 'cx1', audioLang: 'en', tracks: [{ languageCode: 'en', kind: 'asr' }] });
+    await sleep(30);
+    toPage('track', { videoId: 'CX1', body: track(60, 'Cancel') });
+    await sleep(60);
+    const running = (await ask()).running;
+    check('确实有在途批次', running > 0, '在途 ' + running);
+
+    sent.length = 0;
+    toPage('player', { videoId: 'CX2', title: 'cx2', audioLang: 'en', tracks: [{ languageCode: 'en', kind: 'asr' }] });
+    await sleep(40);
+    const cancels = sent.filter((m) => m.type === 'cancel');
+    check('切视频时通知 background 掐掉旧批次', cancels.length > 0, JSON.stringify(sent.map((m) => m.type)));
+    check('掐的是「比这一版旧的全部」，不点名某一批',
+          cancels.every((c) => c.payload && c.payload.epoch > 0 && c.payload.batchId === undefined),
+          JSON.stringify(cancels.map((c) => c.payload)));
+    /* 送出去的每一批都要带身份，background 才登记得起来 */
+    const batchMsgs = sent.filter((m) => m.type === 'translateBatch');
+    await sleep(240);
+    const after = await ask();
+    check('切走之后在途计数归零', after.running === 0, '在途 ' + after.running);
+    check('批次带着 epoch 和批次编号发出去',
+          batchMsgs.length === 0 || batchMsgs.every((m) => typeof m.payload.epoch === 'number' && m.payload.batchId > 0),
+          JSON.stringify(batchMsgs.map((m) => ({ e: m.payload.epoch, b: m.payload.batchId }))));
+  }
+
+  console.log('\n[23] 后台永远不回应时的客户端兜底');
+  {
+    /* MV3 的 service worker 空闲会被回收。回收发生在响应回来之前的话，sendMessage
+       的 promise 永远不会 settle —— 这一批永久停在 run，running 不减，并发额度从此
+       少一个，攒够三次整个视频停摆，而屏幕上什么都不说。
+       桩里的计时器是按 1/50 压缩的，120 秒兜底在这里是 60 毫秒。 */
+    runtimeReply = async (m) => {
+      if (m.type === 'cacheIndex') return { ok: true, removed: 0 };
+      return new Promise(() => {});      // 永不 settle
+    };
+    await chrome.storage.local.set({
+      settings: { targetLang: '简体中文', apiKey: 'x', concurrency: 1, useCache: false, extraPrompt: 'deadline' }
+    });
+    await sleep(30);
+    toPage('player', { videoId: 'DL', title: 'dl', audioLang: 'en', tracks: [{ languageCode: 'en', kind: 'asr' }] });
+    await sleep(30);
+    sent.length = 0;
+    toPage('track', { videoId: 'DL', body: track(20, 'Deadline') });
+    await sleep(40);
+    const mid = await ask();
+    check('这一批确实卡住了', mid.running > 0 && mid.status === 'translating', JSON.stringify(mid));
+
+    await sleep(200);
+    const end = await ask();
+    check('到点把额度还回来', end.running === 0, '在途 ' + end.running);
+    check('状态说得出出了什么事', end.status === 'error' && !!end.error, JSON.stringify(end));
+    const one = sent.filter((m) => m.type === 'cancel' && m.payload && m.payload.batchId > 0);
+    check('顺带点名让 background 把那一批掐掉', one.length > 0,
+          JSON.stringify(sent.filter((m) => m.type === 'cancel').map((m) => m.payload)));
   }
 
   console.log('\n结果：' + pass + ' 通过 / ' + fail + ' 失败');

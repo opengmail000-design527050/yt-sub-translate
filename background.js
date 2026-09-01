@@ -5,11 +5,19 @@ import { DEFAULTS, getSettings, resolveTargetName, CODE_TO_NAME, hasApiPermissio
  * ------------------------------------------------------------------ */
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || !msg.type) return;
+  const tabId = (sender && sender.tab && sender.tab.id) || 0;
 
   if (msg.type === 'translateBatch') {
-    translateBatch(msg.payload)
+    translateBatch(msg.payload, tabId)
       .then(sendResponse)
       .catch((e) => sendResponse({ ok: false, error: errText(e) }));
+    return true;
+  }
+
+  /* 内容脚本那边 epoch 一涨（切视频、换字幕轨、改了影响译文的设置），
+   * 旧的批次就已经不作数了 —— 这里要真的把 fetch 掐掉，不能只是不采用结果。 */
+  if (msg.type === 'cancel') {
+    sendResponse({ ok: true, aborted: cancelJobs(tabId, msg.payload || {}) });
     return true;
   }
 
@@ -137,7 +145,81 @@ function applyReasoning(body, s) {
 /* 一块最多拆多少层。每层对半砍，3 层足以把 20 行的批砍到 2~3 行。 */
 const MAX_SPLIT = 3;
 
-async function translateBatch(payload) {
+/* ------------------------------------------------------------------ *
+ * 在途请求登记簿
+ *
+ * 内容脚本那边早就有 epoch 守卫，可它只做到「不采用结果」：切一次视频，这边的
+ * fetch 照样跑完，跑完还接着走 strict 重问、repair 补翻、拆块重来 —— 并发 3 时
+ * 一次切视频最多白付十来次请求，而且这些请求还占着下一个视频的并发额度。
+ *
+ * 所以每一批都在这里登记 (tabId, epoch, batchId)，把它用掉的 AbortController
+ * 挂上去。收到 cancel 就 abort，并把 cancelled 立起来 —— 后面几跳都会看这面旗，
+ * 已经作废的批次绝不会再发下一个请求。
+ * ------------------------------------------------------------------ */
+const inflight = new Map();
+
+const jobKey = (tabId, epoch, batchId) => tabId + '|' + epoch + '|' + batchId;
+
+function openJob(tabId, epoch, batchId) {
+  const job = {
+    key: jobKey(tabId, epoch, batchId),
+    tabId: Number(tabId) || 0,
+    epoch: Number(epoch) || 0,
+    batchId: Number(batchId) || 0,
+    cancelled: false,
+    ctrls: new Set()
+  };
+  inflight.set(job.key, job);
+  return job;
+}
+
+function closeJob(job) {
+  if (job) inflight.delete(job.key);
+}
+
+function abortJob(job) {
+  job.cancelled = true;
+  let n = 0;
+  for (const c of job.ctrls) { try { c.abort(); n++; } catch (_) {} }
+  job.ctrls.clear();
+  return n;
+}
+
+/**
+ * 作废在途请求。
+ *   { epoch }            这个标签页里所有比 epoch 旧的批次（切视频、换轨、改设置）
+ *   { epoch, batchId }   只作废指定的那一批（内容脚本的兜底超时用）
+ */
+function cancelJobs(tabId, p) {
+  const epoch = Number((p && p.epoch) || 0);
+  const one = p && p.batchId !== undefined && p.batchId !== null ? Number(p.batchId) : null;
+  let n = 0;
+  for (const job of inflight.values()) {
+    if (job.tabId !== (Number(tabId) || 0)) continue;
+    const hit = one === null ? job.epoch < epoch : (job.epoch === epoch && job.batchId === one);
+    if (hit) n += abortJob(job);
+  }
+  return n;
+}
+
+/* 标签页关掉了，它那些还在跑的批次没有任何人在等 */
+try {
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    for (const job of inflight.values()) if (job.tabId === tabId) abortJob(job);
+  });
+} catch (_) {}
+
+/** 这一批已经被判死刑了吗 */
+const stopped = (ctx) => !!(ctx.job && ctx.job.cancelled);
+
+function cancelError() {
+  const e = new Error('已取消');
+  e.cancelled = true;
+  e.noRetry = true;
+  return e;
+}
+
+async function translateBatch(payload, tabId) {
   const s = await getSettings();
   if (!s.apiKey) return { ok: false, error: '还没填 API Key（点插件图标 → 设置）' };
   if (!(await hasApiPermission(s.baseUrl))) return { ok: false, error: PERM_HINT };
@@ -145,8 +227,10 @@ async function translateBatch(payload) {
   const lines = payload.lines || [];
   if (!lines.length) return { ok: true, map: {}, usage: null };
 
+  const job = openJob(tabId, payload.epoch, payload.batchId);
   const ctx = {
     s,
+    job,
     sourceLang: payload.sourceLang,
     noPunct: !!payload.noPunct,
     title: payload.title || '',
@@ -156,7 +240,12 @@ async function translateBatch(payload) {
     split: 0        // 因为错位而对半重来的次数，前端拿它判断批次是不是给大了
   };
 
-  const r = await translateChunk(ctx, lines, 0, payload.prev || [], payload.next || []);
+  let r;
+  try {
+    r = await translateChunk(ctx, lines, 0, payload.prev || [], payload.next || []);
+  } finally {
+    closeJob(job);
+  }
 
   const usage = ctx.totals.prompt_tokens || ctx.totals.completion_tokens ? ctx.totals : null;
 
@@ -176,6 +265,10 @@ async function translateBatch(payload) {
   } : null;
 
   if (usage || align) await addUsage(usage, align);
+
+  /* 被取消的批次不是失败：内容脚本那边这一版已经作废了，报错只会在弹窗里
+   * 留下一条与用户无关的红字，还会把批次档位往下压。 */
+  if (job.cancelled) return { ok: false, cancelled: true, error: '已取消', usage };
 
   // 一行都没翻出来：当成整批失败，前端才会给重试入口
   // split 也要带上：前端靠它区分「批次太大导致错位」和「网络/鉴权失败」
@@ -215,6 +308,8 @@ function edgeGap(missing, total) {
  * 每层内部重新编号 1..N（数字短更省 token，也比全局四位数序号更不容易错位）。
  */
 async function translateChunk(ctx, items, depth, prev, next) {
+  // 拆块是递归的，每一层进来先看一眼这一批还作不作数
+  if (stopped(ctx)) return { out: new Map(), missing: items };
   const numbered = items.map((it, i) => ({ n: i + 1, id: it.id, text: it.text }));
 
   const collect = (m) => {
@@ -226,7 +321,7 @@ async function translateChunk(ctx, items, depth, prev, next) {
     return out;
   };
 
-  let r = await askModel(ctx.s, numbered, { prev, next }, '', ctx.sourceLang, ctx.noPunct, ctx.title);
+  let r = await askModel(ctx.s, numbered, { prev, next }, '', ctx.sourceLang, ctx.noPunct, ctx.title, ctx.job);
   bumpUsage(ctx.totals, r.usage);
   let out = r.error ? new Map() : collect(r.map);
 
@@ -236,8 +331,8 @@ async function translateChunk(ctx, items, depth, prev, next) {
    *
    * 必须挡住 r.error：401、网络中断、超时这些跟格式毫无关系，重问一次也还是那个
    * 结果，只会把等待和计费翻倍 —— 90 秒超时的批会变成 3 分钟起。 */
-  if (!r.error && !out.size) {
-    const again = await askModel(ctx.s, numbered, { prev, next }, 'strict', ctx.sourceLang, ctx.noPunct, ctx.title);
+  if (!r.error && !out.size && !stopped(ctx)) {
+    const again = await askModel(ctx.s, numbered, { prev, next }, 'strict', ctx.sourceLang, ctx.noPunct, ctx.title, ctx.job);
     bumpUsage(ctx.totals, again.usage);
     if (!again.error) { r = again; out = collect(again.map); }
   }
@@ -275,8 +370,10 @@ async function translateChunk(ctx, items, depth, prev, next) {
 
   /* 缺号散在中间：这是模型明确留空了某几行，前后的编号仍然对得上，
    * 单独补翻这几行是安全的。 */
+  if (stopped(ctx)) return { out, missing: missing.map((m) => ({ id: m.id, text: m.text })) };
+
   const fixItems = missing.map((m, i) => ({ n: i + 1, id: m.id, text: m.text }));
-  const fix = await askModel(ctx.s, fixItems, null, 'repair', ctx.sourceLang, ctx.noPunct, ctx.title);
+  const fix = await askModel(ctx.s, fixItems, null, 'repair', ctx.sourceLang, ctx.noPunct, ctx.title, ctx.job);
   bumpUsage(ctx.totals, fix.usage);
   if (!fix.error) {
     // 补翻也可能合并。只有整整齐齐补全了才敢用，缺一行就整份不要
@@ -428,7 +525,7 @@ function refBlocks(ref, noPunct) {
  *   'repair' 补翻上次漏掉的那几行
  *   'strict' 上次连编号都没带回来，把格式要求说死了重问
  */
-async function askModel(s, items, ref, mode, sourceLang, noPunct, title) {
+async function askModel(s, items, ref, mode, sourceLang, noPunct, title, job) {
   const userParts = [];
   if (!mode && s.useContext) {
     const blocks = refBlocks(ref, noPunct);
@@ -457,7 +554,7 @@ async function askModel(s, items, ref, mode, sourceLang, noPunct, title) {
 
   let data;
   try {
-    data = await postJson(joinUrl(s.baseUrl), s.apiKey, body, 90000, 1);
+    data = await postJson(joinUrl(s.baseUrl), s.apiKey, body, 90000, 1, job);
   } catch (e) {
     return { map: {}, usage: null, error: errText(e) };
   }
@@ -500,11 +597,15 @@ function parseLines(content, items) {
   return map;
 }
 
-async function postJson(url, key, body, timeoutMs, retries) {
+async function postJson(url, key, body, timeoutMs, retries, job) {
   let lastErr = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
+    if (job && job.cancelled) throw cancelError();
     const ctrl = new AbortController();
+    // 登记进这一批的名下，切视频时 cancelJobs 才拽得住它
+    if (job) job.ctrls.add(ctrl);
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    const done = () => { clearTimeout(timer); if (job) job.ctrls.delete(ctrl); };
     try {
       const res = await fetch(url, {
         method: 'POST',
@@ -515,7 +616,7 @@ async function postJson(url, key, body, timeoutMs, retries) {
         body: JSON.stringify(body),
         signal: ctrl.signal
       });
-      clearTimeout(timer);
+      done();
 
       const text = await res.text();
       if (!res.ok) {
@@ -541,7 +642,10 @@ async function postJson(url, key, body, timeoutMs, retries) {
       }
       return JSON.parse(text);
     } catch (e) {
-      clearTimeout(timer);
+      done();
+      /* 中止有两个来源：我们自己的超时闹钟，和「这一批已经作废了」。
+       * 后者绝不能当成超时去重试 —— 那正是我们刚刚花力气掐掉的那次请求。 */
+      if (job && job.cancelled) throw cancelError();
       lastErr = e;
       if (e && e.noRetry) throw e;
       if (e && e.name === 'AbortError') { if (attempt < retries) continue; throw new Error('请求超时'); }
