@@ -155,6 +155,7 @@
     curIdx: -1,
     settleAt: 0,             // 拖动进度条后，等到这个时刻才允许再调度（见 SEEK_SETTLE）
     cache: null,             // { items: {hash: text} }
+    cachePending: {},        // 上次落盘之后新买到的译文，落盘时只送这一份增量
     cacheDirty: false,
     /* 「这一版」的编号：切视频、重新切句、改了影响译文的设置都会 +1。
      * 所有异步回来的结果写回前先对一下号，不然旧响应会写进新状态。 */
@@ -628,17 +629,36 @@
     } catch (_) { st.cache = { items: {} }; }
   }
 
-  const saveCache = debounce(async () => {
+  /* 落盘。
+   *
+   * 以前是内容脚本自己把整个 st.cache 写回 storage。同一个视频开两个标签页时，
+   * 两边各持有一份 items、各写各的，后写的把先写的整个盖掉 —— 被盖掉的那些译文
+   * 下次重看还要再买一次。索引早就为同样的理由搬去 background 排队了，正文没搬。
+   *
+   * 现在只送增量，合并由 background 在那条队列里做，两个标签页的结果是并集。 */
+  async function flushCache() {
     if (!S.useCache || !st.videoId || !st.cache || !st.cacheDirty) return;
+    const items = st.cachePending;
+    st.cachePending = {};
     st.cacheDirty = false;
+    if (!Object.keys(items).length) return;
+    const k = cacheKey(st.videoId);
+    st.cache.ts = Date.now();
     try {
-      const k = cacheKey(st.videoId);
-      st.cache.ts = Date.now();
-      await chrome.storage.local.set({ [k]: st.cache });
-      // 顺手让 background 淘汰过期和超量的缓存，正好在同一次索引读写里做掉
-      await cacheIndexOp('touch', k, { days: Number(S.cacheDays) || 60, max: Number(S.cacheMax) || 300 });
-    } catch (_) {}
-  }, 4000);
+      // 顺手让 background 淘汰过期和超量的缓存，正好在同一次读写里做掉
+      await chrome.runtime.sendMessage({
+        type: 'cacheWrite',
+        payload: { op: 'write', key: k, items,
+                   prune: { days: Number(S.cacheDays) || 60, max: Number(S.cacheMax) || 300 } }
+      });
+    } catch (_) {
+      // 没送出去就还回去，下次再试 —— 别把用户已经买到的译文丢了
+      Object.assign(st.cachePending, items);
+      st.cacheDirty = true;
+    }
+  }
+
+  const saveCache = debounce(flushCache, 4000);
 
   function cacheGet(text) {
     if (!S.useCache || !st.cache) return null;
@@ -646,7 +666,9 @@
   }
   function cachePut(text, tr) {
     if (!S.useCache || !st.cache) return;
-    st.cache.items[hash(text)] = tr;
+    const h = hash(text);
+    st.cache.items[h] = tr;      // 本页自己读的那一份
+    st.cachePending[h] = tr;     // 待落盘的增量
     st.cacheDirty = true;
     saveCache();
   }
@@ -1050,6 +1072,7 @@
     st.trans = new Map();
     st.dropped = new Set();
     st.cache = { items: {} };
+    st.cachePending = {};
     st.cacheDirty = false;
     st.error = '';
     resetTier();
@@ -1586,6 +1609,8 @@
     st.wantLang = '';
     st.userTrack = null;
     st.cache = null;
+    st.cachePending = {};
+    st.cacheDirty = false;
     removeOverlay();
 
     stop(false);
@@ -1653,13 +1678,11 @@
     evaluateTracks();       // 换回外语：重新判一遍，autoStart 会把翻译接上
   }
 
+  /* 关页面 / 切视频时立刻落盘。这里不能 await（beforeunload 里没有那个时间），
+   * 发出去就算 —— 消息本身是同步投递的，background 那边照样排进队列。 */
   function saveCacheNow() {
-    if (S.useCache && st.videoId && st.cache && st.cacheDirty) {
-      const k = cacheKey(st.videoId);
-      st.cache.ts = Date.now();
-      st.cacheDirty = false;
-      try { chrome.storage.local.set({ [k]: st.cache }); touchIndex(k); } catch (_) {}
-    }
+    const p = flushCache();
+    if (p && p.catch) p.catch(() => {});
   }
 
   /* 一条字幕轨的身份：语言 | 是否自动字幕 | 自动翻译到哪个语言。
@@ -1956,6 +1979,7 @@
     st.dropped = new Set();
     st.error = '';
     st.cacheDirty = false;      // 没落盘的旧译文属于旧配置，别写了
+    st.cachePending = {};
     st.cache = null;
     resetTier();
     st.batches = st.segments.length ? makeBatches(st.segments) : [];

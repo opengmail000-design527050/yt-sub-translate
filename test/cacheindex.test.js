@@ -157,6 +157,51 @@ const DAY = 86400000;
           JSON.stringify(store.cacheIndex));
   }
 
+  console.log('\n[9] 两个标签页交错写同一个视频的缓存正文');
+  {
+    /* 索引搬到 background 排队的理由，正文一字不差地同样成立：两个标签页各持有
+       一份 items、各自整份写回，后写的把先写的整个盖掉 —— 被盖掉的那些译文下次
+       重看还要再买一次。现在内容脚本只发增量，合并在队列里做。 */
+    const { api, store } = load({ c_vid: { items: { a: '甲' }, ts: 1 } });
+    await Promise.all([
+      api.cacheIndexOp({ op: 'write', key: 'c_vid', items: { b: '乙' } }),
+      api.cacheIndexOp({ op: 'write', key: 'c_vid', items: { c: '丙' } })
+    ]);
+    const got = Object.keys(store.c_vid.items).sort().join(',');
+    check('三份译文都在，一份都没被盖掉', got === 'a,b,c', JSON.stringify(store.c_vid));
+    check('顺带把索引也记上了', !!(store.cacheIndex && store.cacheIndex.c_vid), JSON.stringify(store.cacheIndex));
+  }
+
+  console.log('\n[10] 同一个键的两次增量，后写的赢');
+  {
+    const { api, store } = load({});
+    await api.cacheIndexOp({ op: 'write', key: 'c_x', items: { h: '旧' } });
+    await api.cacheIndexOp({ op: 'write', key: 'c_x', items: { h: '新' } });
+    check('同一句话以最后写的为准', store.c_x.items.h === '新', JSON.stringify(store.c_x));
+  }
+
+  console.log('\n[11] 空增量不该凭空造出一条缓存');
+  {
+    const { api, store } = load({});
+    await api.cacheIndexOp({ op: 'write', key: 'c_empty', items: {} });
+    check('没有正文就不写正文', store.c_empty === undefined, JSON.stringify(store.c_empty));
+  }
+
+  console.log('\n[12] 写正文和淘汰在同一次里做完');
+  {
+    const old = Date.now() - 100 * DAY;
+    const { api, store } = load({
+      cacheIndex: { c_old: old, c_keep: Date.now() },
+      c_old: { items: { z: '陈年' } },
+      c_keep: { items: {} }
+    });
+    await api.cacheIndexOp({ op: 'write', key: 'c_new', items: { n: '新的' },
+                             prune: { days: 60, max: 300 } });
+    check('新的写进去了', !!store.c_new && store.c_new.items.n === '新的', JSON.stringify(store.c_new));
+    check('过期的那条正文一起清掉了', store.c_old === undefined, JSON.stringify(Object.keys(store)));
+    check('没过期的没被误伤', !!store.c_keep, JSON.stringify(Object.keys(store)));
+  }
+
   console.log('\n结果：' + pass + ' 通过 / ' + fail + ' 失败');
   process.exit(fail ? 1 : 0);
 })();

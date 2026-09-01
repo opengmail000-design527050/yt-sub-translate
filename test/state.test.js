@@ -46,6 +46,16 @@ const chrome = {
     sendMessage: async (m) => {
       sent.push(m);
       if (m && m.type === 'cancel') return { ok: true, aborted: 0 };
+      /* 缓存正文的写入现在是「发增量给 background，由它合并」。桩在这里当一回
+         background：把增量并进 storage —— 不然任何跟缓存有关的断言都无从谈起。 */
+      if (m && m.type === 'cacheWrite') {
+        const p = m.payload || {};
+        const cur = (storage[p.key] && storage[p.key].items) ? storage[p.key] : { items: {} };
+        Object.assign(cur.items, p.items || {});
+        cur.ts = Date.now();
+        storage[p.key] = cur;
+        return { ok: true };
+      }
       return runtimeReply ? runtimeReply(m) : { ok: false, error: 'stub' };
     },
     onMessage: { _l: [], addListener(f) { this._l.push(f); } }
@@ -496,11 +506,16 @@ const check = (name, cond, extra) => {
        后写的把先写的整个盖掉 —— 丢了索引的缓存正文从此没人清理（淘汰只遍历索引里
        的键），存储只增不减。现在一律发消息给 background 排队处理。 */
     delete storage.cacheIndex;
-    const ops = [];
+    /* 缓存相关的消息一律从 sent 里看：正文写入被桩当场当成 background 处理掉了，
+       走不到 runtimeReply。 */
+    const ops = () => sent
+      .filter((m) => m.type === 'cacheIndex' || m.type === 'cacheWrite')
+      .map((m) => m.payload);
     runtimeReply = async (m) => {
-      if (m.type === 'cacheIndex') { ops.push(m.payload); return { ok: true, removed: 0 }; }
+      if (m.type === 'cacheIndex') return { ok: true, removed: 0 };
       return { ok: true, map: Object.fromEntries(m.payload.lines.map((l) => [l.id, '译:' + l.id])), dropped: [] };
     };
+    sent.length = 0;
     await chrome.storage.local.set({
       settings: { targetLang: '简体中文', apiKey: 'x', concurrency: 1, useCache: true, extraPrompt: 'idx' }
     });
@@ -510,19 +525,21 @@ const check = (name, cond, extra) => {
     toPage('track', { videoId: 'IDX', body: track(8, 'Indexed') });
     await sleep(260);
 
-    check('载入缓存时报了一次 touch', ops.some((o) => o.op === 'touch'),
-          JSON.stringify(ops));
-    const pruning = ops.find((o) => o.op === 'touch' && o.prune);
+    check('载入缓存时报了一次 touch', ops().some((o) => o.op === 'touch'),
+          JSON.stringify(ops()));
+    const pruning = ops().find((o) => o.op === 'write' && o.prune);
     check('落盘那次顺带带上了淘汰参数', !!pruning && pruning.prune.days > 0 && pruning.prune.max > 0,
-          JSON.stringify(pruning));
+          JSON.stringify(ops()));
+    check('落盘送的是增量而不是整份', !!pruning && pruning.items && Object.keys(pruning.items).length > 0,
+          JSON.stringify(pruning && pruning.items));
     check('content 自己没有直接写 cacheIndex', storage.cacheIndex === undefined,
           JSON.stringify(storage.cacheIndex));
 
-    ops.length = 0;
+    sent.length = 0;
     await new Promise((res) => chrome.runtime.onMessage._l.forEach((f) => f({ type: 'purgeCache' }, {}, res)));
     await sleep(60);
-    check('重翻本视频是让 background 把这条索引忘掉', ops.some((o) => o.op === 'forget'),
-          JSON.stringify(ops));
+    check('重翻本视频是让 background 把这条索引忘掉', ops().some((o) => o.op === 'forget'),
+          JSON.stringify(ops()));
     check('重翻仍然直接删掉了缓存正文', !cacheKeys().some((k) => k.includes('IDX')), JSON.stringify(cacheKeys()));
   }
 

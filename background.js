@@ -28,7 +28,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  if (msg.type === 'cacheIndex') {
+  /* 缓存的索引和正文都只在这里改，而且共用一条队列 —— 两个标签页看同一个视频时，
+   * 谁都不能拿自己那份整个盖掉对方的。 */
+  if (msg.type === 'cacheIndex' || msg.type === 'cacheWrite') {
     cacheIndexOp(msg.payload)
       .then((n) => sendResponse({ ok: true, removed: n }))
       .catch((e) => sendResponse({ ok: false, error: errText(e) }));
@@ -779,7 +781,7 @@ let usageQueue = Promise.resolve();
  * ------------------------------------------------------------------ */
 let cacheQueue = Promise.resolve();
 
-/** payload: { op: 'touch' | 'forget' | 'clear', key, prune?: { days, max } } */
+/** payload: { op: 'touch' | 'forget' | 'clear' | 'write', key, items?, prune?: { days, max } } */
 function cacheIndexOp(payload) {
   const task = cacheQueue.then(() => runCacheOp(payload || {}));
   // 一次失败不能把整条队列卡死，也不能把这次的返回值漏给下一次
@@ -799,6 +801,12 @@ async function runCacheOp(p) {
   const key = p.key || '';
   if (!key) return 0;
 
+  /* 正文也走这条队列。以前是内容脚本自己 chrome.storage.local.set 整份写回：
+   * 同一个视频开两个标签页，两边各持有一份 items、各写各的，后写的把先写的整个
+   * 盖掉 —— 被盖掉的那些译文下次重看再买一次。索引早就为同样的理由搬过来了，
+   * 正文没搬。现在内容脚本只发增量，合并在这里做。 */
+  if (p.op === 'write') await mergeCacheBody(key, p.items);
+
   const got = await chrome.storage.local.get('cacheIndex');
   const idx = got.cacheIndex || {};
   if (p.op === 'forget') delete idx[key];
@@ -809,6 +817,18 @@ async function runCacheOp(p) {
   if (drop.length) await chrome.storage.local.remove(drop);
   await chrome.storage.local.set({ cacheIndex: idx });
   return drop.length;
+}
+
+/** 把这一批新译文并进已经存着的那份。读-改-写全程在队列里，不会跟别人交错。 */
+async function mergeCacheBody(key, items) {
+  if (!items || typeof items !== 'object') return;
+  const keys = Object.keys(items);
+  if (!keys.length) return;
+  const got = await chrome.storage.local.get(key);
+  const cur = (got[key] && got[key].items) ? got[key] : { items: {} };
+  for (const k of keys) cur.items[k] = items[k];
+  cur.ts = Date.now();
+  await chrome.storage.local.set({ [key]: cur });
 }
 
 /** 过期的，加上超出条数上限的。刚 touch 过的那条时间最新、排在最前，不会淘汰掉自己。 */
