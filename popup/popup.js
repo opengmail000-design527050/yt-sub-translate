@@ -1,8 +1,10 @@
-import { DEFAULTS, getSettings, setSettings, CODE_TO_NAME as LANG_NAMES } from '../common.js';
+import { DEFAULTS, getSettings, setSettings, CODE_TO_NAME as LANG_NAMES,
+         getProfiles, saveProfiles, pickProfile } from '../common.js';
 
 const $ = (id) => document.getElementById(id);
 let S = Object.assign({}, DEFAULTS);
 let tabId = null;
+let P = { active: '', list: [] };   // 存了哪几套接口配置
 
 const STATUS_TEXT = {
   idle: '已关闭',
@@ -21,6 +23,7 @@ const HINTS = {
 
 async function init() {
   S = await getSettings();
+  try { P = await getProfiles(); } catch (_) {}
   paintSettings();
   bind();
   await connectTab();
@@ -41,22 +44,77 @@ function paintSettings() {
 
 /* 推理三档是对着某一个模型选的 —— 同样的「关闭」，换个模型可能就关不掉了。
    所以把当前模型写在「推理强度」右边，不用为了确认它跑一趟设置页。
-   模型名取自 settings（运行时的唯一真相），配置档只用来补个悬停说明。 */
-async function paintModel() {
+   模型名取自 settings（运行时的唯一真相），同时兼作按钮：点开就是已存的
+   配置档，换一套接口不用再跑设置页。 */
+function paintModel() {
   const el = $('modelTag');
   const model = String(S.model || '').trim();
   el.textContent = model || '未设置模型';
   el.classList.toggle('none', !model);
 
-  let name = '';
-  try {
-    const got = await chrome.storage.local.get('profiles');
-    const p = got.profiles;
-    const cur = p && Array.isArray(p.list) ? p.list.find((x) => x.id === p.active) : null;
-    name = (cur && cur.name) || '';
-  } catch (_) {}
-  el.title = (name ? `配置「${name}」　·　` : '') +
-             (model ? '模型 ' + model : '还没填模型，去设置页填一个');
+  const cur = P.list.find((x) => x.id === P.active);
+  el.title = (cur && cur.name ? `配置「${cur.name}」　·　` : '') +
+             (model ? '模型 ' + model : '还没填模型，去设置页填一个') +
+             '　·　点击切换配置';
+}
+
+/* 每次打开都重画一遍：上一次点过之后当前档换了，标记得跟着挪。 */
+function paintMenu() {
+  const box = $('pfMenu');
+  box.innerHTML = '';
+  for (const p of P.list) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'pfItem' + (p.id === P.active ? ' on' : '');
+    b.dataset.id = p.id;
+    b.setAttribute('role', 'menuitemradio');
+    b.setAttribute('aria-checked', p.id === P.active ? 'true' : 'false');
+    const n = document.createElement('span');
+    n.className = 'pfName';
+    n.textContent = p.name;
+    const m = document.createElement('span');
+    m.className = 'pfModel';
+    m.textContent = p.model || '未设置模型';
+    b.append(n, m);
+    box.appendChild(b);
+  }
+  // 只有一档时这一条就是唯一出口：告诉用户上哪儿再加一档
+  const more = document.createElement('button');
+  more.type = 'button';
+  more.className = 'pfItem pfMore';
+  more.setAttribute('role', 'menuitem');
+  more.textContent = '管理配置…';
+  box.appendChild(more);
+}
+
+function openMenu(on) {
+  const box = $('pfMenu');
+  const want = on === undefined ? box.classList.contains('hidden') : on;
+  if (want) paintMenu();
+  box.classList.toggle('hidden', !want);
+  $('modelTag').classList.toggle('open', want);
+  $('modelTag').setAttribute('aria-expanded', want ? 'true' : 'false');
+}
+
+/* P 是「存了哪几套」，settings 是「现在正在用哪一套」—— 和设置页一样，
+   切换就是把某一档的接口字段灌回 settings，运行时只认 settings。
+   content 那边收到 settingsChanged 会自己作废旧译文按新配置重来。 */
+async function switchProfile(id) {
+  const p = P.list.find((x) => x.id === id);
+  if (!p || id === P.active) return;
+  P = await saveProfiles({ active: id, list: P.list });
+  await save(pickProfile(p));
+  paintModel();
+  toast(`已切换到「${p.name}」`);
+}
+
+let toastTimer = null;
+function toast(msg) {
+  const el = $('toast');
+  el.textContent = msg;
+  el.classList.remove('hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.add('hidden'), 1600);
 }
 
 function setSeg(id, value) {
@@ -110,6 +168,20 @@ function bind() {
     b.textContent = '译文和原文对不上？重翻本视频';
     refreshStatus();
   });
+
+  $('modelTag').addEventListener('click', (e) => { e.stopPropagation(); openMenu(); });
+
+  $('pfMenu').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    e.stopPropagation();
+    openMenu(false);
+    if (b.dataset.id) switchProfile(b.dataset.id);
+    else chrome.runtime.openOptionsPage();
+  });
+
+  document.addEventListener('click', () => openMenu(false));
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') openMenu(false); });
 
   $('openOptions').addEventListener('click', () => chrome.runtime.openOptionsPage());
 }
