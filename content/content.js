@@ -800,7 +800,7 @@
       .sort((a, b) => a.b.from - b.b.from);
 
     while (st.running < Math.max(1, S.concurrency) && candidates.length) {
-      const { b, i } = candidates.shift();
+      const { i } = candidates.shift();
       runBatch(i);
     }
     updateStatus();
@@ -1273,7 +1273,7 @@
     const segs = st.segments;
     if (!segs.length) return -1;
     // 就近线性查找（播放通常是顺序的），失败再二分
-    let i = st.curIdx;
+    const i = st.curIdx;
     if (i >= 0 && i < segs.length) {
       const stop = Math.min(segs.length, i + 6);
       /* 先按严格区间找。buildSegments 已经把每句的 end 拉到了下一句的 start，句子之间

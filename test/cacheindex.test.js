@@ -144,8 +144,7 @@ const DAY = 86400000;
   console.log('\n[7] 一次失败不能把整条队列卡死');
   {
     const { api, store } = load({ cacheIndex: {} });
-    let boom = null;
-    await api.cacheIndexOp(null).catch((e) => { boom = e; });   // 空 payload
+    await api.cacheIndexOp(null).catch(() => {});   // 空 payload
     await api.cacheIndexOp({ op: 'touch', key: 'c_after' });
     check('后面的写入照常生效', 'c_after' in store.cacheIndex, JSON.stringify(store.cacheIndex));
   }

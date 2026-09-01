@@ -28,7 +28,7 @@
   };
 
   const origFetch = window.fetch;
-  window.fetch = function (input, init) {
+  window.fetch = function (input, _init) {
     const p = origFetch.apply(this, arguments);
     try {
       const url = typeof input === 'string' ? input : (input && input.url);

@@ -61,7 +61,7 @@ function joinUrl(base) {
  *  用来分块和分隔编号的记号。原样插进去，一个精心起名的标题就能伪造出一个块头
  *  骗过模型，所以先把它们抹平再截断。 */
 function safeTitle(title) {
-  return String(title || '').replace(/[\[\]|\r\n]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+  return String(title || '').replace(/[[\]|\r\n]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
 }
 
 function buildSystemPrompt(s, sourceLang, noPunct, title) {
