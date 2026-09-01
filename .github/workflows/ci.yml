@@ -24,3 +24,17 @@ jobs:
         with:
           name: extension-zip
           path: build/*.zip
+
+  # 端到端要下一个完整的 Chromium（扩展装不进 headless shell），单独一个 job，
+  # 挂了不影响单元测试那条线的结论。
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run e2e

@@ -272,6 +272,7 @@ icons/make-icons.js  图标生成脚本（node icons/make-icons.js）
 npm test           # 先打包，再跑全部测试文件
 npm run lint       # eslint 最小规则集
 npm run check      # lint + 测试
+npm run e2e        # 端到端冒烟（真 Chrome + 真扩展，需先 npx playwright install chromium）
 node test/state.test.js   # 单独跑一个（需要先 npm run build）
 ```
 
@@ -301,6 +302,10 @@ node test/state.test.js   # 单独跑一个（需要先 npm run build）
   都不许改）、切换要把整档灌回 settings 且不碰全局设置、在卡片里改字段要存回当前那一档
   （切走再切回来不能丢）、新建不继承上一档的 Key、复制自动加序号、删除要点两下且最后
   一档删不掉、存储里的 active 失效时兜回第一档。
+- `test/e2e/smoke.mjs` 是唯一在真浏览器里跑的：装上打包好的扩展，把 YouTube 页面和
+  模型接口都换成假的，验四条 —— 冷启动能翻出字幕并装上播放器按钮、切视频不再翻上一个
+  视频的句子、用户换字幕轨后跟着换、连撞三次 429 之后自己恢复。单元测试全绿也可能装不
+  起来（manifest 路径写错、打包漏文件、内容脚本第一行就抛异常），这四条堵的是那个洞。
 - `popup.test.js` 覆盖弹窗里点模型名切配置档这条路：菜单每档一条 + 「管理配置…」、
   切换要把整档灌回 settings 且不碰全局设置、要通知页面按新配置重来、点当前档是空操作
   （不重复发消息）、每次打开都重画。

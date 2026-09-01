@@ -8,12 +8,14 @@
     "test": "node test/run.js",
     "lint": "eslint .",
     "zip": "npm run build && node tools/zip.mjs",
+    "e2e": "npm run build && node test/e2e/smoke.mjs",
     "check": "npm run lint && npm test"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
     "esbuild": "^0.28.2",
-    "eslint": "^9.0.0"
+    "eslint": "^9.0.0",
+    "playwright": "^1.62.1"
   },
   "engines": {
     "node": ">=18"
