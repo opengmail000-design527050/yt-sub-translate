@@ -48,7 +48,8 @@ function makeEl(tag) {
  * opts.uiLang          浏览器界面语言（DEFAULTS 的 targetLang 是 'auto'，跟着它走）
  */
 function boot(opts) {
-  const o = Object.assign({ settings: {}, settingsDelayMs: 0, playerReadyMs: 0, trackFails: 0, uiLang: 'en-US' }, opts);
+  const o = Object.assign({ settings: {}, settingsDelayMs: 0, playerReadyMs: 0, trackFails: 0,
+                            uiLang: 'en-US', pathname: '/watch' }, opts);
 
   /* ---- 假时钟 ---- */
   let now = 0, seq = 0;
@@ -163,7 +164,7 @@ function boot(opts) {
   };
   win.XMLHttpRequest.prototype = { open() {}, send() {} };
   win.window = win; win.self = win; win.document = doc; win.chrome = chrome;
-  win.location = { href: 'https://www.youtube.com/watch?v=VID', search: '?v=VID' };
+  win.location = { href: 'https://www.youtube.com/watch?v=VID', search: '?v=VID', pathname: o.pathname };
 
   const ctx = vm.createContext(win);
   vm.runInContext(require('./bundle')(), ctx, { filename: 'content.js' });
@@ -188,6 +189,11 @@ function boot(opts) {
     await b.advance(8000);
     const early = await b.status();
     ok('8 秒时确实还没就绪（说明用例本身有效）', !early.videoId, JSON.stringify(early));
+    /* 自检第一版在这儿就喊「YouTube 改版了」（问够 12 次约 7 秒就判死刑），等播放器
+       真的就绪又自己消失 —— 一个会自己好的报错比不报还糟，它教用户以后别信这个提示。
+       而「播放器二十秒才就绪」本来就是这条用例的前提。 */
+    ok('等播放器的时候不许喊「YouTube 改版了」', early.status !== 'playerChanged', early.status);
+    ok('也不该记成 playerChanged', early.playerChanged !== true, JSON.stringify(early.playerChanged));
     await b.advance(20000);
     const late = await b.status();
     ok('播放器就绪后仍然问到了视频', late.videoId === 'VID', JSON.stringify(late));
@@ -240,6 +246,31 @@ function boot(opts) {
     const s = await b.status();
     ok('重试之后拿到了字幕', s.segments > 0, JSON.stringify(s));
     ok('确实重新拉过', b.fetchCount >= 2, 'fetchCount=' + b.fetchCount);
+  }
+
+  console.log('\n[5] 真的读不出播放器数据：等够了就得说出来');
+  {
+    /* 上一条防的是「太早喊」，这条防的是矫枉过正 —— 真出事时得有人说话。 */
+    const b = boot({ settings: { targetLang: '简体中文', apiKey: 'x' }, playerReadyMs: 1e9 });
+    await b.advance(20000);
+    const early = await b.status();
+    ok('20 秒时还忍着没喊', early.status !== 'playerChanged', early.status);
+    await b.advance(60000);
+    const late = await b.status();
+    ok('等够之后如实报出来', late.status === 'playerChanged', JSON.stringify(late));
+    ok('说得出缺的是哪一项', (late.capsMissing || []).includes('player-response'),
+       JSON.stringify(late.capsMissing));
+  }
+
+  console.log('\n[6] 不是视频页：怎么等都不该喊改版');
+  {
+    /* 首页、搜索页、频道页上那个悬停预览播放器也匹配 .html5-video-player，
+       可那些页面本来就没有我们要的 player response —— 那不是坏，是没这回事。 */
+    const b = boot({ settings: { targetLang: '简体中文', apiKey: 'x' },
+                     playerReadyMs: 1e9, pathname: '/' });
+    await b.advance(90000);
+    const s = await b.status();
+    ok('首页上安安静静', s.status !== 'playerChanged', JSON.stringify(s));
   }
 
   console.log(`\n结果：${pass} 通过 / ${fail} 失败`);

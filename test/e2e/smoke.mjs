@@ -145,10 +145,20 @@ console.log('\n[2] 切视频：旧视频的行不再往外发');
   }, box, { timeout: 20000 }).catch(() => {});
   api.lines.length = 0;
   await page.goto('https://www.youtube.com/watch?v=Delta');
-  await sleep(4000);
+  await page.waitForFunction((sel) => {
+    const el = document.querySelector(sel);
+    return el && el.textContent && el.textContent.indexOf('译:') === 0;
+  }, box, { timeout: 20000 }).catch(() => {});
   ok('切过去之后翻的是新视频的句子', api.lines.some((l) => l.includes('Delta')),
      api.lines.slice(0, 2).join(' / '));
-  ok('没有再翻上一个视频的句子', !api.lines.some((l) => l.includes('Charlie')),
+
+  /* 「切走的那一刻正在飞的那几个请求」不算 —— 它们在浏览器掐断之前就已经到了假接口。
+     要验的是方案里那条：切视频 2 秒之后，不该再有属于上一个视频的新请求。 */
+  await sleep(2000);
+  api.lines.length = 0;
+  await sleep(3000);
+  ok('切走 2 秒之后不再有属于上一个视频的新请求',
+     !api.lines.some((l) => l.includes('Charlie')),
      api.lines.filter((l) => l.includes('Charlie')).slice(0, 2).join(' / '));
   await page.close();
 }

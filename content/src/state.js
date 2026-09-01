@@ -152,6 +152,14 @@ export function pageUnsupported() {
  * 走不通、认不出音轨语言，照常翻，留在诊断信息里就够了。
  * 把「缺一样就报坏」写死是不对的：getAudioTrack 在单音轨视频上本来就可能没有，
  * 那样会把一个明明能用的插件说成坏了。 */
+/** 地址栏里的视频 id。认不出来（不在视频页）就返回 ''。 */
+function urlVideoId() {
+  try {
+    if (location.pathname !== '/watch') return '';
+    return new URLSearchParams(location.search).get('v') || '';
+  } catch (_) { return ''; }
+}
+
 export function onSelfCheck(c) {
   if (!c) return;
   const miss = [];
@@ -162,8 +170,14 @@ export function onSelfCheck(c) {
   if (!c.bar) miss.push('chrome-bottom');
   st.capsMissing = miss;
 
-  // 已经切出句子了就说明这条路是通的，再报坏没有意义
-  const broken = !!c.broken && !st.segments.length;
+  /* 第二道闸（第一道在 inject：得在视频页上、等够 45 秒）。
+   *
+   * 已经切出句子就不必说了。另一半是：地址栏里这个视频的信息我们已经拿到了 ——
+   * 那 player response 显然读得出来，这不是改版。
+   * 比的是「当前这一页的 id」而不是「有没有 id」：YouTube 真在中途改版时，
+   * 新页面的播放器信息一条都进不来，st.videoId 还停在上一个视频上，
+   * 光看「有没有」会把这种情况漏掉。 */
+  const broken = !!c.broken && !st.segments.length && st.videoId !== urlVideoId();
   if (broken === st.playerChanged) return;
   st.playerChanged = broken;
   log(broken ? 'selfcheck 坏了：' + miss.join(',') : 'selfcheck 恢复');

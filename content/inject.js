@@ -235,10 +235,30 @@
    *   读不到 player response = 致命，什么都干不了，明确告诉用户「等插件更新」；
    *   其余几样 = 少一样残一点（按钮没了、兜底路走不通、认不出音轨语言），
    *              照常翻，只在诊断信息里留个痕。
-   * 一上来读不到是正常的（播放器还没装好），所以问够 CAPS_TRIES 次才敢判死刑。 */
-  const CAPS_TRIES = 12;      // ~7 秒，跟播放器正常就绪的时间留足余量
+   * 判死刑要非常克制。第一版是「问够 12 次（约 7 秒）还读不到就报改版」，结果冷启动
+   * 时人人都会先看到一次「YouTube 改版了」，过十几秒又自己消失 —— 播放器本来就可能
+   * 二十秒才就绪（慢网、前贴片广告、storage 大了拖慢启动），我们自己的 boot 测试里
+   * 就有这么一条用例。一个会自己好的报错比不报还糟：它教用户以后别信这个提示。
+   *
+   * 现在三个条件同时成立才算坏：
+   *   1. 在视频页上（首页、搜索页、频道页上那个悬停预览播放器也匹配 .html5-video-player，
+   *      而那些页面本来就没有我们要的 player response —— 那不是坏，是没这回事）；
+   *   2. 播放器元素在，可 player response 一直读不出来；
+   *   3. 已经等了 WAIT_BEFORE_BROKEN 这么久（比播放器最慢的就绪时间还宽一截）。 */
+  const WAIT_BEFORE_BROKEN = 45000;
 
-  function caps(tries) {
+  let watchSince = Date.now();      // 这一页开始等的时刻，站内跳转会重新起算
+
+  /** 只有真正的视频页才谈得上「读不到播放器数据」 */
+  function onVideoPage() {
+    try {
+      const path = location.pathname;
+      if (path === '/watch') return !!new URLSearchParams(location.search).get('v');
+      return path.indexOf('/embed/') === 0;
+    } catch (_) { return false; }
+  }
+
+  function caps() {
     const p = getPlayer();
     const c = {
       player: !!p,
@@ -248,13 +268,14 @@
       controls: !!document.querySelector('#movie_player .ytp-right-controls'),
       bar: !!document.querySelector('#movie_player .ytp-chrome-bottom')
     };
-    c.broken = !!(c.player && !c.response && tries >= CAPS_TRIES);
+    c.broken = !!(c.player && !c.response && onVideoPage() &&
+                  Date.now() - watchSince > WAIT_BEFORE_BROKEN);
     return c;
   }
 
   let lastCaps = '';
-  function watchCaps(tries) {
-    const c = caps(tries);
+  function watchCaps() {
+    const c = caps();
     const sig = JSON.stringify(c);
     if (sig === lastCaps) return;
     lastCaps = sig;
@@ -377,6 +398,7 @@
 
   document.addEventListener('yt-navigate-finish', () => {
     lastCap = ''; lastAudio = ''; lastCaps = ''; reported = false; n = 0;
+    watchSince = Date.now();       // 换了一页，等待重新起算
     setTimeout(report, 250);
   });
   document.addEventListener('yt-player-updated', () => setTimeout(report, 250));
@@ -389,11 +411,11 @@
   let n = 0;
   const iv = setInterval(() => {
     report();
-    watchCaps(n);
+    watchCaps();
     // 前 40 次（~24 秒）密集问；之后降频常驻，代价可以忽略
     if (++n >= 40) {
       clearInterval(iv);
-      setInterval(() => { if (!reported) { report(); watchCaps(n); } }, 3000);
+      setInterval(() => { if (!reported) { report(); watchCaps(); } }, 3000);
     }
   }, 600);
   report();
