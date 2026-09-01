@@ -63,6 +63,32 @@
     return { track, spoken: track.languageCode || spoken };
   }
 
+  /* 简繁是两路：zh-CN / zh-Hans / zh-SG 一路，zh-TW / zh-HK / zh-Hant 一路。
+   * 只比主语言的话，简中用户会被塞一条繁体轨（虽然多半也看得懂，但能挑就挑对的）。 */
+  const SCRIPT = {
+    'zh': 'hans', 'zh-cn': 'hans', 'zh-sg': 'hans', 'zh-hans': 'hans',
+    'zh-tw': 'hant', 'zh-hk': 'hant', 'zh-mo': 'hant', 'zh-hant': 'hant'
+  };
+  const scriptOf = (c) => SCRIPT[String(c || '').toLowerCase()] || '';
+
+  /** 视频自带的、目标语言的人工字幕轨。有它就不用花钱翻了。
+   *  自动字幕（asr）不算 —— 那是机器听写原声的，只会是原声语言。 */
+  function pickTargetTrack(tracks, tgt) {
+    if (!tracks || !tracks.length || !tgt) return '';
+    const cand = tracks.filter((t) => t.kind !== 'asr' && sameLang(t.languageCode, tgt));
+    if (!cand.length) return '';
+    const score = (t) => {
+      const c = String(t.languageCode || '');
+      if (c.toLowerCase() === String(tgt).toLowerCase()) return 3;
+      const a = scriptOf(c), b = scriptOf(tgt);
+      if (a && b) return a === b ? 2 : 0;
+      return 1;
+    };
+    let best = cand[0], bs = score(cand[0]);
+    for (const t of cand.slice(1)) { const v = score(t); if (v > bs) { best = t; bs = v; } }
+    return best.languageCode || '';
+  }
+
   /* 中日韩与全角字符按 2 个单位计宽，其余按 1。
    * 这样同一套长度上限在拉丁语系和中日韩之间都说得通 ——
    * 130 个拉丁字符和 65 个汉字，无论信息量还是屏幕宽度都差不多。 */
@@ -105,7 +131,8 @@
   const st = {
     videoId: '',
     title: '',
-    audioLang: '',
+    audioLang: '',          // 当前音轨的语言（多音轨视频里会中途变）
+    audioDubbed: false,     // 当前音轨是 YouTube 的 AI 自动配音
     tracks: [],
     sourceLang: '',          // 自动识别出的原声语言
     needsTranslation: false, // 原声语言与目标语言不同才需要翻
@@ -139,7 +166,15 @@
     reqSeq: 0,               // 每次点名要轨都发一个新编号
     wantReq: 0,              // 正在等的那个编号，只认它回来的那一份
     wantLang: '',            // 点名要的是哪种语言，回来的对不上就不认
-    userTrack: null          // 用户在 CC 菜单里选中的轨，之后一切以它为准
+    userTrack: null,         // 用户在 CC 菜单里选中的轨，之后一切以它为准
+
+    /* 视频自带目标语言的人工字幕轨时，直接拿它当译文，不花 token。
+     * '' = 没有这回事 | pending = 已发现、正在取 | on = 正在用 | off = 取失败/不好用，照常自己翻 */
+    adoptLang: '',
+    adoptState: '',
+    adoptCues: null,         // 那条轨的原始 cue，改字幕长度档位时重新对齐要用
+    adoptReq: 0,
+    adoptIds: new Set()      // 哪些句子的译文是从那条轨贴过来的（回退时要收回）
   };
 
   /* ------------------------------------------------------------------ *
@@ -242,6 +277,15 @@
       if (clean[i].end <= clean[i].start) clean[i].end = clean[i].start + 0.25;
     }
 
+    /* 静音前的最后一条 cue，时长常常一路拉到下一条开口的地方 —— 自动字幕尤其如此，
+     * 播放器靠它把这行字一直挂在屏幕上。可那几十秒里根本没人说话：照它插值，这条
+     * cue 后半句的时间会被摊进静音里，下面的静音检测也就看不见这个洞了。
+     * 按文本长度给单条 cue 的时长封顶，说得再慢也用不了这么久。 */
+    for (const c of clean) {
+      const cap = Math.max(2, 0.5 + wid(c.text) * 0.14);
+      if (c.end - c.start > cap) c.end = c.start + cap;
+    }
+
     // 拼成整条文本，同时记录每个 cue 的字符区间用于时间插值。
     // 中日韩之间不能补空格，否则会在词中间插进空隙。
     let full = '';
@@ -335,6 +379,29 @@
         prevEnd = mk.end;
       }
       pieces.push({ s: s0, e: full.length });
+    }
+
+    /* 1.5 静音处一律断开，跟这条轨有没有标点无关。
+     * 上面按标点切句有个前提：句末真的有标点。说话人拖长音收尾、或者自动字幕漏掉
+     * 那个句号时，一个「句子」就会横跨几十秒静音 —— 它的 start 落在静音之前，于是
+     * 整段静音里屏幕上挂着的，是后面才说出口的下一段对白。无标点那条分支已经按
+     * 停顿切过了，这里再拿一个更宽的阈值兜住有标点的轨：2 秒以上的空档，正常语句
+     * 内部不会出现，出现了就一定是真的没人说话。 */
+    const HOLE = 2;
+    const holes = [];                       // 静音之后那条 cue 的起始字符位置
+    for (let i = 1; i < marks.length; i++) {
+      if (marks[i].start - marks[i - 1].end > HOLE) holes.push(marks[i].pos);
+    }
+    if (holes.length) {
+      const broken = [];
+      for (const p of pieces) {
+        let s0 = p.s;
+        for (const h of holes) {
+          if (h > s0 && h < p.e) { broken.push({ s: s0, e: h }); s0 = h; }
+        }
+        broken.push({ s: s0, e: p.e });
+      }
+      pieces = broken;
     }
 
     // 2. 只有真的过长才切，而且尽量只在强标点处切。
@@ -596,6 +663,115 @@
     return hit;
   }
 
+  /* ------------------------------------------------------------------ *
+   * 采用视频自带的译文轨
+   *
+   * 视频自带一条目标语言的人工字幕时，那就是一份现成的译文：拿来贴到我们自己的
+   * 句子上，字幕框、双语、字体、拖动、选中复制全都照旧，只是「译文」这一半不再
+   * 来自模型 —— 一个 token 都不花。
+   * ------------------------------------------------------------------ */
+
+  /** 至少要贴住这么多比例的句子才认。自带轨只覆盖了片头几分钟、或者时间轴对不上
+   *  的时候，与其让一多半的句子只剩原文，不如老老实实自己翻 —— 正常的自带轨
+   *  贴合率在 95% 以上，够不到这条线的基本都是不能用的轨。 */
+  const ADOPT_MIN_COVER = 0.75;
+
+  function maybeAdopt() {
+    if (st.adoptState !== 'pending' || !st.adoptLang) return;
+    if (!st.segments.length || st.adoptReq) return;
+    st.adoptReq = ++st.reqSeq;
+    post2page('fetchTrack', { reqId: st.adoptReq, exact: true, lang: st.adoptLang, kind: '', tlang: '' });
+    /* 拉不回来就别让用户干等着一屏原文：到点还没回应就当没有这条轨，照常自己翻。 */
+    setTimeout(() => {
+      if (st.adoptReq && st.adoptState === 'pending') {
+        st.adoptReq = 0;
+        st.adoptState = 'off';
+        if (st.active) { schedule(); updateStatus(); }
+      }
+    }, 6000);
+  }
+
+  function onAdoptBody(data) {
+    st.adoptReq = 0;
+    const body = data.body;
+    const cues = body.trim().startsWith('<') ? parseXml(body) : (parseJson3(body) || parseXml(body));
+    if (!cues || !cues.length) { adoptFailed(); return; }
+    // 对齐用的是只往前走的双指针，先按时间排一遍，乱序的轨不至于错配
+    st.adoptCues = cues.slice().sort((a, b) => a.start - b.start);
+    const cover = applyAdopted();
+    if (cover < ADOPT_MIN_COVER) { st.adoptCues = null; adoptFailed(); return; }
+    st.adoptState = 'on';
+    if (st.active) render();
+    updateStatus();
+  }
+
+  /** 收回从自带轨贴进去的译文（覆盖率不够，改回自己翻） */
+  function dropAdopted() {
+    if (!st.adoptIds.size) return;
+    for (const id of st.adoptIds) st.trans.delete(id);
+    st.adoptIds = new Set();
+    /* 贴的时候可能盖掉了缓存里已经买过的译文，这里原样还回来，
+       免得回退之后又为同一句付一次钱。顺带把批次状态重新算对。 */
+    applyCacheToAll();
+    for (const b of st.batches) {
+      if (b.state !== 'done') continue;
+      for (let i = b.from; i <= b.to; i++) if (!st.trans.has(i)) { b.state = 'idle'; break; }
+    }
+  }
+
+  function adoptFailed() {
+    dropAdopted();
+    st.adoptState = 'off';
+    if (st.active) { schedule(); updateStatus(); }
+  }
+
+  /* 把自带的那条轨按时间贴到我们自己的句子上。
+   *
+   * 两条轨的 cue 边界几乎不可能一致（一条按原文断句，一条按译文断句），所以按
+   * 「这条 cue 的时间大部分落在哪一句里」归属，一条 cue 只算给一句 —— 否则同一行
+   * 中文会在相邻两句里各出现一遍。落不到任何一句上的 cue 就丢掉，一句都没分到的
+   * 句子只显示原文（跟模型没给出译文时的表现一致）。
+   *
+   * 返回贴住了多少比例的句子，给上面那道覆盖率闸门用。 */
+  function applyAdopted() {
+    const segs = st.segments;
+    if (!st.adoptCues || !segs.length) return 0;
+
+    const buckets = new Map();
+    let si = 0;
+    for (const c of st.adoptCues) {
+      const text = decodeEntities(c.text || '').replace(/\s+/g, ' ').trim();
+      if (!text || /^\[[^\]]*\]$/.test(text)) continue;      // [音乐] 这类提示音不要
+      while (si < segs.length - 1 && segs[si].end <= c.start) si++;
+      let best = -1, bestOv = 0;
+      for (let j = si; j < segs.length && segs[j].start < c.end; j++) {
+        const ov = Math.min(segs[j].end, c.end) - Math.max(segs[j].start, c.start);
+        if (ov > bestOv) { bestOv = ov; best = j; }
+      }
+      if (best < 0) continue;
+      const arr = buckets.get(segs[best].id);
+      if (arr) arr.push(text); else buckets.set(segs[best].id, [text]);
+    }
+
+    const added = new Set();
+    for (const [id, list] of buckets) {
+      // 中日韩之间不补空格，否则会在词中间插进空隙（跟 buildSegments 同一条规矩）
+      const joined = list.reduce((a, t) =>
+        a + (a && !(isWide(a[a.length - 1]) && isWide(t[0])) ? ' ' : '') + t, '');
+      st.trans.set(id, joined);
+      added.add(id);
+      st.dropped.delete(id);
+    }
+    st.adoptIds = added;
+    // 贴过译文的批次不用再翻
+    for (const b of st.batches) {
+      let done = true;
+      for (let i = b.from; i <= b.to; i++) if (!st.trans.has(i)) { done = false; break; }
+      if (done) b.state = 'done';
+    }
+    return buckets.size / segs.length;
+  }
+
   /* 播放头一次跳过这么多句，就认定是拖进度条／连按方向键，而不是正常播放 */
   const SEEK_JUMP = 5;
   /* 跳完之后等这么久没有再跳，才真的开始翻 */
@@ -603,6 +779,9 @@
 
   function schedule() {
     if (!st.active || !st.segments.length || !settingsReady) return;
+    /* 自带译文轨还在取（pending）或者已经用上（on）：一个请求都不该发。
+       pending 时不拦住的话，等它回来这几批就白翻了，钱已经花掉。 */
+    if (st.adoptState === 'pending' || st.adoptState === 'on') return;
     /* 还在拖动中：一个请求都不发。
      *
      * 以前 render 里播放头一换句就立刻 schedule，而拖进度条时播放头会连续落在
@@ -1230,7 +1409,7 @@
     document.documentElement.classList.toggle('ytst-hide-native', !!S.hideNative);
     syncButton();
     if (!st.segments.length) requestTrack();
-    else { schedule(); render(); }
+    else { maybeAdopt(); schedule(); render(); }
     updateStatus();
   }
 
@@ -1290,7 +1469,13 @@
     st.videoId = data.videoId;
     st.title = data.title || '';
     st.audioLang = data.audioLang || '';
+    st.audioDubbed = false;
     st.tracks = data.tracks || [];
+    st.adoptLang = '';
+    st.adoptState = '';
+    st.adoptCues = null;
+    st.adoptReq = 0;
+    st.adoptIds = new Set();
     st.rawCues = null;
     st.segments = [];
     st.trans = new Map();
@@ -1328,8 +1513,21 @@
     const chosen = st.userTrack ? sigLang(capSig(st.userTrack)) : '';
     st.sourceLang = chosen || (pick ? pick.spoken : '');
     const tgt = targetCode();
+    /* 听的是什么语言比字幕轨是什么语言更有发言权：多音轨视频可能正放着中文配音，
+       而字幕轨列表里挂的还是英文 ASR。音轨认得出来就以音轨为准。 */
+    const audioIsTarget = !!st.audioLang && sameLang(st.audioLang, tgt);
     // 认不出目标语言时（自定义写法）就照翻，别自作主张跳过
-    st.needsTranslation = !!pick && !sameLang(st.sourceLang, tgt);
+    st.needsTranslation = !!pick && !audioIsTarget && !sameLang(st.sourceLang, tgt);
+
+    /* 视频自带目标语言的人工字幕轨：那就是一份现成的译文，没有理由再花钱翻一遍。
+       换视频、换目标语言、字幕轨列表变了都会重算，所以这里只在结论变了时重置。 */
+    const adopt = st.needsTranslation ? pickTargetTrack(st.tracks, tgt) : '';
+    if (adopt !== st.adoptLang) {
+      st.adoptLang = adopt;
+      st.adoptState = adopt ? 'pending' : '';
+      st.adoptCues = null;
+      st.adoptReq = 0;
+    }
 
     if (!st.tracks.length) {
       if (!st.active) { st.status = 'nosub'; renderStatusChip(); }
@@ -1339,6 +1537,29 @@
 
     if (!st.active && !st.userOff && S.enabled && S.autoStart && st.needsTranslation) start();
     else updateStatus();
+  }
+
+  /* 换音轨。多音轨视频（尤其 YouTube 的 AI 自动配音）常常一上来就给一条配音轨，
+   * 听着别扭；用户在播放器里换回原声，我们得跟着重判：音轨已经是目标语言就没什么
+   * 可翻的，换回外语就该接着翻。 */
+  function onAudioTrack(a) {
+    if (!a || !a.lang) return;
+    const same = sameLang(a.lang, st.audioLang);
+    st.audioLang = a.lang;
+    st.audioDubbed = !!a.dubbed;
+    /* 音轨轮询从页面一加载就开始跑，很可能赶在设置读回来之前。
+       那会儿 targetCode() 还是 DEFAULTS 算出来的，判出来的结论没人纠正。 */
+    if (!settingsReady) { pendingEval = true; return; }
+    if (same) { updateStatus(); return; }   // 只是变体不同（en → en-US），不折腾
+
+    if (sameLang(a.lang, targetCode())) {
+      /* 换到了目标语言的音轨（多半是配音）：正在翻的停下，别再花钱。
+         stop(false) —— 不算用户关的，等他换回外语音轨我们还要自己开回来。 */
+      st.needsTranslation = false;
+      if (st.active) stop(false); else updateStatus();
+      return;
+    }
+    evaluateTracks();       // 换回外语：重新判一遍，autoStart 会把翻译接上
   }
 
   function saveCacheNow() {
@@ -1406,6 +1627,10 @@
     if (st.videoId && vid !== st.videoId) return;
     if (!body || typeof body !== 'string') return;
 
+    /* 自带译文轨的回应。它跟原文轨是两码事，绝不能走下面那套换轨逻辑 ——
+       否则会把中文轨当成新的原文轨用上。 */
+    if (data.reqId && data.reqId === st.adoptReq) { onAdoptBody(data); return; }
+
     const sig = trackSigOf(data);
     /* 换轨。原来这里是无条件 `if (st.segments.length) return`，
      * 于是用户在 YouTube 里换了字幕语言之后，翻译框还挂着上一条轨的内容。
@@ -1454,7 +1679,15 @@
 
     /* 用户挑的这条轨本来就是目标语言（比如直接选了中文字幕）：再翻一遍既费钱、
      * 显示出来还是两行一样的字。让位给 YouTube 自己的字幕就好。 */
-    if (switching && st.active && !st.needsTranslation) { stop(false); return; }
+    if (switching && st.active && !st.needsTranslation) {
+      st.adoptLang = '';                 // 都让位了，就别再去取那条译文轨
+      st.adoptState = '';
+      st.adoptCues = null;
+      st.adoptReq = 0;
+      stop(false);
+      return;
+    }
+    maybeAdopt();          // 有现成译文轨就去取，取到之前 schedule 不会发请求
 
     const epoch = st.epoch;
     await loadCache(st.videoId);
@@ -1476,7 +1709,9 @@
     st.batches = makeBatches(st.segments);
     st.curIdx = -1;
     st.settleAt = 0;
+    st.adoptIds = new Set();
     applyCacheToAll();
+    if (st.adoptState === 'on') applyAdopted();   // 句子边界变了，重新贴一遍
     if (st.active) { schedule(); render(); }
     updateStatus();
   }
@@ -1504,6 +1739,8 @@
       onTrackBody(m.data);
     } else if (m.type === 'captiontrack') {
       onCaptionTrack(m.data);
+    } else if (m.type === 'audiotrack') {
+      onAudioTrack(m.data);
     } else if (m.type === 'trackfail') {
       // 点名要的那条轨没找到：维持现在这条，别退回去翻成另一种语言
       if (m.data && m.data.reqId && m.data.reqId === st.wantReq) {
@@ -1543,6 +1780,8 @@
         title: st.title,
         sourceLang: st.sourceLang,
         audioLang: st.audioLang,
+        audioDubbed: st.audioDubbed,
+        adopted: st.adoptState === 'on' ? st.adoptLang : '',
         trackLang: sigLang(st.trackSig),
         trackKind: String(st.trackSig).split('|')[1] || '',
         trackList: st.tracks.map((t) => ({ lang: t.languageCode, kind: t.kind })),
@@ -1623,12 +1862,22 @@
     resetTier();
     st.batches = st.segments.length ? makeBatches(st.segments) : [];
 
+    /* 目标语言可能刚被改掉：自带译文轨得重新认一次。不重置的话，adoptState 会
+       停在 on/pending 上把 schedule 一直闸着 —— 译文刚被清空，又永远不会重翻。 */
+    st.adoptLang = '';
+    st.adoptState = '';
+    st.adoptCues = null;
+    st.adoptReq = 0;
+    st.adoptIds = new Set();
+    evaluateTracks();
+
     if (st.videoId && st.segments.length) {
       const epoch = st.epoch;
       await loadCache(st.videoId);
       if (epoch !== st.epoch) return;
       applyCacheToAll();
     }
+    maybeAdopt();
     render();
     updateStatus();
     schedule();
@@ -1642,7 +1891,8 @@
   window.addEventListener('beforeunload', saveCacheNow);
 
   // 测试用出口：只有测试桩会预先把这个键设成对象，页面里永远是 undefined
-  if (window.__YTST_TEST__) Object.assign(window.__YTST_TEST__, { buildSegments, parseJson3, findIndex, st });
+  if (window.__YTST_TEST__) Object.assign(window.__YTST_TEST__,
+    { buildSegments, parseJson3, findIndex, st, applyAdopted, pickTargetTrack, onAudioTrack, evaluateTracks });
 
   /* 一直问到问出来为止。
    *

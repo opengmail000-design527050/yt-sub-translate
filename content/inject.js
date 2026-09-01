@@ -160,6 +160,52 @@
     lastCap = capSig(currentCaption());
   }
 
+  /* ---------- 2.6 当前音轨 ---------- */
+  /* 多音轨视频（人工配音、YouTube 的 AI 自动配音）可以中途换音轨，而换音轨不会重发
+   * player response —— 只能盯着播放器问。getAudioTrack() 返回的对象里有一层压缩过
+   * 名字的小对象，形如 {name, id: 'zh-Hans.3', isDefault, isAutoDubbed}；那个键名
+   * （写这段时是 j7）每次发版都可能变，所以按字段特征去认，不写死键名。
+   * 单音轨视频这里拿到的 id 是 'und'，当成「不知道」，别去覆盖播放器信息里的判断。 */
+  const LANG_ID = /^([A-Za-z]{2,3}(?:-[A-Za-z0-9]+)*)\.\d+$/;
+
+  function audioMeta(t) {
+    if (!t || typeof t !== 'object') return null;
+    for (const k of Object.keys(t)) {
+      const v = t[k];
+      if (v && typeof v === 'object' && !Array.isArray(v) &&
+          ('isAutoDubbed' in v || 'audioIsDefault' in v || ('id' in v && 'name' in v))) return v;
+    }
+    return null;
+  }
+
+  function currentAudio() {
+    const p = getPlayer();
+    if (!p || typeof p.getAudioTrack !== 'function') return null;
+    let t = null;
+    try { t = p.getAudioTrack(); } catch (_) { return null; }
+    const meta = audioMeta(t);
+    const m = LANG_ID.exec(String((meta && meta.id) || (t && t.id) || ''));
+    if (!m) return null;                       // 'und' / 认不出的写法：当作没这回事
+    let count = 0;
+    try { count = (p.getAvailableAudioTracks() || []).length; } catch (_) {}
+    return {
+      lang: m[1],
+      name: (meta && meta.name) || '',
+      dubbed: !!(meta && meta.isAutoDubbed),
+      isDefault: !!(meta && (meta.isDefault || meta.audioIsDefault)),
+      count
+    };
+  }
+
+  let lastAudio = '';
+  function watchAudio() {
+    const a = currentAudio();
+    const sig = a ? a.lang + '|' + (a.dubbed ? 'd' : '') : '';
+    if (sig === lastAudio) return;
+    lastAudio = sig;
+    if (a) post('audiotrack', a);
+  }
+
   /* ---------- 3. 直接拉取字幕轨 ---------- */
   /* 不预设任何语言：内容脚本已经判定好原声语言并传进来，
    * 没传就退回「人工轨优先，其次自动字幕」。 */
@@ -273,7 +319,7 @@
     else if (m.type === 'disableNative') disableNative();
   });
 
-  document.addEventListener('yt-navigate-finish', () => { lastCap = ''; reported = false; setTimeout(report, 250); });
+  document.addEventListener('yt-navigate-finish', () => { lastCap = ''; lastAudio = ''; reported = false; setTimeout(report, 250); });
   document.addEventListener('yt-player-updated', () => setTimeout(report, 250));
   // 播放器换了视频/换了配置，字幕轨列表会跟着变
   document.addEventListener('yt-page-data-updated', () => { reported = false; setTimeout(report, 250); });
@@ -292,6 +338,6 @@
   }, 600);
   report();
 
-  // 字幕选项要一直盯着 —— 用户随时可能在 CC 菜单里换语言
-  setInterval(watchCaption, 1000);
+  // 字幕选项和音轨都要一直盯着 —— 用户随时可能在播放器里换语言
+  setInterval(() => { watchCaption(); watchAudio(); }, 1000);
 })();

@@ -255,5 +255,50 @@ console.log('\n[11] findIndex 不该让上一句多赖 0.35 秒');
   T.st.curIdx = -1;
 }
 
+console.log('\n[12] 句末没有标点时，静音照样要断开');
+{
+  /* 按标点切句有个前提：句末真的有标点。说话人拖长音收尾、或者自动字幕漏掉那个句号
+     时，一个「句子」就横跨了整段静音 —— 它的 start 落在静音之前，于是那几十秒里屏幕
+     上挂着的，是后面才说出口的下一段对白。这就是用户反馈的「提前几十秒」。 */
+  const segs = segsOf([
+    cue(10000, 2000, 'So that is roughly how the whole pipeline fits together and'),
+    cue(70000, 3000, 'okay now let us look at what happens when you push it much harder than that.')
+  ]);
+  check('静音处断成两段', segs.length === 2, JSON.stringify(segs.map((x) => x.text)));
+  check('静音之后那段贴着真实说话时间', segs[1] && Math.abs(segs[1].start - 70) < 0.3,
+        JSON.stringify(segs.map((x) => x.start)));
+  check('静音正中间屏幕上是空的', segs.every((x) => !(40 >= x.start && 40 < x.end)),
+        JSON.stringify(segs.map((x) => [x.start, x.end])));
+
+  // 语句内部的小停顿不能被当成静音切开 —— 0.5 秒在人工字幕里满地都是
+  const tight = segsOf([
+    cue(0, 2000, 'So the question I keep'),
+    cue(2500, 2000, 'coming back to is what intelligence really is.')
+  ]);
+  check('0.5 秒的小停顿不切', tight.length === 1, JSON.stringify(tight.map((x) => x.text)));
+}
+
+console.log('\n[13] cue 时长盖住静音时也要断开');
+{
+  /* 自动字幕里，静音前最后一条 cue 的 dDurationMs 常常一路拉到下一条开口的地方，好让
+     这行字一直挂在屏幕上。照它插值，这条 cue 后半句的时间会被摊进静音里，上面那条
+     静音检测也就看不见这个洞 —— 两段对白粘成一段，从 10 秒起就显示 70 秒才说的话。 */
+  const segs = segsOf([
+    cue(10000, 60000, 'So that is the setup and'),
+    cue(70000, 3000, 'now here is the result we got out of it in the end.')
+  ]);
+  check('断成两段', segs.length === 2, JSON.stringify(segs.map((x) => x.text)));
+  check('后一段对齐到 70 秒', segs[1] && Math.abs(segs[1].start - 70) < 0.3,
+        JSON.stringify(segs.map((x) => x.start)));
+  check('前一段不会在静音里一直挂着', segs[0] && segs[0].end < 20,
+        JSON.stringify(segs.map((x) => x.end)));
+
+  // 封顶不能砍掉正常语速的长句：说完它本来就要这么久
+  const slow = segsOf([cue(0, 7000,
+    'This one sentence takes a good while to say out loud, at a perfectly normal pace.')]);
+  check('正常长句的时长没被砍', slow.length === 1 && slow[0].end - slow[0].start > 6.5,
+        JSON.stringify(slow));
+}
+
 console.log('\n结果：' + pass + ' 通过 / ' + fail + ' 失败');
 process.exit(fail ? 1 : 0);

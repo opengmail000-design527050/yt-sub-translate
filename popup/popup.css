@@ -161,6 +161,18 @@ body {
   margin: 4px auto -4px;
 }
 
+/* 推理这三档是对着某一个模型选的（同样的「关闭」，换个模型未必关得掉），
+   所以把当前模型摆在标题右边 */
+.modelTag {
+  font-size: 11px;
+  color: var(--muted);
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.modelTag.none { color: #d98b8b; }
+
 .hint { margin-top: 8px; font-size: 10.5px; color: var(--dim); line-height: 1.5; }
 
 input[type=range] {

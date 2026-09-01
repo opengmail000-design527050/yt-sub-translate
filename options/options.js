@@ -17,9 +17,9 @@ const FONT_STACKS = {
 };
 
 const FONT_NOTES = {
-  serif: '衬线的字形有呼吸感，中文回落到思源宋体，长时间看不累。',
-  sans: '最中性、笔画最实，小字号或低画质视频下最稳。',
-  kai: '楷体最有手写的味道，但笔画细，建议配合更大的字号和更深的底色。'
+  serif: '字形有呼吸感，久看不累。',
+  sans: '笔画最实，小字号或低画质下最稳。',
+  kai: '有手写味，笔画细，建议配大字号和深底色。'
 };
 const RANGE_FIELDS = {
   origScale: (v) => Number(v).toFixed(2),
@@ -30,9 +30,9 @@ const RANGE_FIELDS = {
 };
 
 const DENSITY_NOTES = {
-  compact: '句子切得短，中英大多各占一行，字幕框最矮。代价是长句会在逗号处多切几刀，译文偶尔略碎。',
-  standard: '推荐。完整句子优先，长句才在逗号处切。通常英文一到两行、中文一行。',
-  full: '几乎不拆句，译文最连贯，但一屏可能到四行，框会明显变高。'
+  compact: '框最矮，长句会切得略碎。',
+  standard: '推荐。整句优先，长句才在逗号处切。',
+  full: '译文最连贯，但一屏可能到四行。'
 };
 const CHECK_FIELDS = ['hideNative', 'autoScale'];
 
@@ -51,19 +51,47 @@ async function init() {
   const stuck = FORCED_ON.filter((k) => !S[k]);
   if (stuck.length) S = await setSettings(Object.fromEntries(stuck.map((k) => [k, true])));
 
+  paintAll();
+  bind();
+  refreshStats();
+}
+
+/** 把 S / P 整个刷到界面上。初始化和「恢复默认」都走这里。 */
+function paintAll() {
   TEXT_FIELDS.forEach((k) => { $(k).value = S[k] ?? ''; });
   Object.keys(RANGE_FIELDS).forEach((k) => {
     $(k).value = S[k];
     $(k + 'V').textContent = RANGE_FIELDS[k]($(k).value);
   });
   CHECK_FIELDS.forEach((k) => { $(k).checked = !!S[k]; });
+  hideKey();
 
-  bind();
   paintProfiles();
   paintPreview();
   paintPos();
   paintPerm();
-  refreshStats();
+}
+
+/* ------------------------------------------------------------------ *
+ * 危险动作：点第一下只是「上膛」，3 秒内再点一下才真执行。
+ * 比弹 confirm 框轻，也不会误触。删除配置、恢复默认都走这里。
+ * ------------------------------------------------------------------ */
+const armTimers = new WeakMap();
+
+function disarm(btn, label) {
+  clearTimeout(armTimers.get(btn));
+  armTimers.delete(btn);
+  btn.classList.remove('arming');
+  btn.textContent = label;
+}
+
+/** 返回 true 表示这一下是「确认」，可以执行了 */
+function armOnce(btn, label, confirmLabel) {
+  if (btn.classList.contains('arming')) { disarm(btn, label); return true; }
+  btn.classList.add('arming');
+  btn.textContent = confirmLabel;
+  armTimers.set(btn, setTimeout(() => disarm(btn, label), 3000));
+  return false;
 }
 
 /* ------------------------------------------------------------------ *
@@ -98,15 +126,18 @@ function paintProfiles() {
   sel.value = P.active;
   // 最后一档不给删，否则就没有任何配置可用了
   $('pfDel').disabled = P.list.length <= 1;
-  disarmDelete();
+  disarm($('pfDel'), '删除');
+}
+
+function hideKey() {
+  $('apiKey').type = 'password';
+  $('toggleKey').textContent = '显示';
 }
 
 /** 把当前设置里的接口字段刷回表单（切换配置之后用） */
 function paintApiFields() {
   for (const k of PROFILE_KEYS) $(k).value = S[k] ?? '';
-  // Key 换了一套，重新遮起来
-  $('apiKey').type = 'password';
-  $('toggleKey').textContent = '显示';
+  hideKey();     // Key 换了一套，重新遮起来
 }
 
 async function switchProfile(id) {
@@ -131,26 +162,10 @@ async function addProfile(from) {
   startRename();
 }
 
-/* 删除是不可逆的（Key 就没了），所以点第一下只是「上膛」，
-   3 秒内再点一下才真删。比弹 confirm 框轻，也不会误触。 */
-let delTimer = null;
-function disarmDelete() {
-  clearTimeout(delTimer);
-  delTimer = null;
-  $('pfDel').classList.remove('arming');
-  $('pfDel').textContent = '删除';
-}
-
+/* 删除是不可逆的（Key 就没了），所以走上膛-确认那一套 */
 async function deleteProfile() {
   if (P.list.length <= 1) return;
-  const btn = $('pfDel');
-  if (!btn.classList.contains('arming')) {
-    btn.classList.add('arming');
-    btn.textContent = '确认删除？';
-    delTimer = setTimeout(disarmDelete, 3000);
-    return;
-  }
-  disarmDelete();
+  if (!armOnce($('pfDel'), '删除', '确认删除？')) return;
 
   const gone = activeProfile();
   const list = P.list.filter((x) => x.id !== gone.id);
@@ -206,8 +221,8 @@ function paintPreview() {
 
   const t = String(S.targetLang || 'auto').trim();
   $('langNote').textContent = (!t || t.toLowerCase() === 'auto')
-    ? `自动：跟随浏览器界面语言（${uiLanguage()}），当前会译成「${resolveTargetName(S)}」。原声语言由插件自己识别，不用设置。`
-    : `固定译成「${t}」。改回 auto 就跟随浏览器界面语言。原声语言由插件自己识别，不用设置。`;
+    ? `auto：跟随浏览器（${uiLanguage()}），当前译成「${resolveTargetName(S)}」。`
+    : `固定译成「${t}」，改回 auto 则跟随浏览器。`;
 }
 
 function paintPos() {
@@ -262,9 +277,8 @@ function bind() {
 
   $('toggleKey').addEventListener('click', () => {
     const el = $('apiKey');
-    const shown = el.type === 'text';
-    el.type = shown ? 'password' : 'text';
-    $('toggleKey').textContent = shown ? '显示' : '隐藏';
+    if (el.type === 'text') hideKey();
+    else { el.type = 'text'; $('toggleKey').textContent = '隐藏'; }
   });
 
   $('profileSel').addEventListener('change', () => switchProfile($('profileSel').value));
@@ -290,6 +304,9 @@ function bind() {
   $('clearCache').addEventListener('click', clearCache);
   $('resetStats').addEventListener('click', resetStats);
   $('resetPos').addEventListener('click', () => commit({ posX: null, posY: null }));
+  $('resetAll').addEventListener('click', resetAll);
+  // 勾不勾决定确认时的措辞，改了就把已上膛的按钮放下
+  $('keepApi').addEventListener('change', () => disarm($('resetAll'), '恢复默认设置'));
 
   // 视频里拖动过字幕框后，这里的位置显示跟着更新
   chrome.storage.onChanged.addListener((ch, area) => {
@@ -318,6 +335,35 @@ async function commit(patch, msg) {
   broadcast();
 }
 
+/* ------------------------------------------------------------------ *
+ * 恢复默认
+ *
+ * 勾着「保留模型与接口」时，PROFILE_KEYS 那几项原样留下、配置档一个不动；
+ * 其余（外观、缓存、字幕框位置…）全部回到 DEFAULTS。这里是整份覆盖写，
+ * 不走 setSettings 的合并 —— 否则以前存过的字段会残留下来。
+ * 翻译缓存和用量统计另有按钮，这里不碰。
+ * ------------------------------------------------------------------ */
+async function resetAll() {
+  const keep = $('keepApi').checked;
+  if (!armOnce($('resetAll'), '恢复默认设置', keep ? '确认恢复？' : '确认恢复（含接口）？')) return;
+
+  const next = Object.assign({}, DEFAULTS);
+  if (keep) Object.assign(next, pickProfile(S));
+  await chrome.storage.local.set({ settings: next });
+  S = next;
+
+  if (!keep) {
+    // 接口也一并出厂：只留一档空的「默认」
+    const one = Object.assign({ id: newProfileId(), name: '默认' }, pickProfile(DEFAULTS));
+    P = await saveProfiles({ active: one.id, list: [one] });
+  }
+
+  $('testCard').classList.add('hidden');
+  paintAll();
+  toast(keep ? '已恢复默认（模型与接口保留）' : '已全部恢复默认');
+  broadcast();
+}
+
 async function broadcast() {
   try {
     const tabs = await chrome.tabs.query({ url: '*://*.youtube.com/*' });
@@ -328,60 +374,73 @@ async function broadcast() {
 }
 
 const REASON_LEVEL = { none: '关闭', low: '低', medium: '中' };
-const REASON_STYLE = {
-  effort_none: 'reasoning_effort 含 "none"',
-  effort: 'reasoning_effort，关闭时不发',
-  enable_thinking: 'enable_thinking',
-  off: '从不发送'
-};
 
-/* 把「设置里选的档位」「实际发出去的字段」「模型真的烧了多少推理 token」
-   三件事摆在一起。只看设置是判断不出推理关没关的 —— 写法选错时，
-   服务商会安安静静地退回它自己的默认档，账单上才看得出来。 */
-function paintTestDetail(res) {
-  const box = $('testDetail');
-  const r = res.reasoning || {};
-  const u = res.usage || {};
-  const rows = [];
+/* ------------------------------------------------------------------ *
+ * 测试连接的结果卡
+ *
+ * 一张模型卡：抬头是模型名和状态，下面几格全是这次请求的硬数字。
+ * 「发出的参数」和「实际推理」要并排看 —— 只看设置判断不出推理关没关，
+ * 写法选错时服务商会安安静静退回它自己的默认档，只有账单上看得出来。
+ * ------------------------------------------------------------------ */
+function cardHead(name, state, label) {
+  return `<div class="mcard-head"><span class="mcard-name">${esc(name || '—')}</span>` +
+         `<span class="pill ${state}">${esc(label)}</span></div>`;
+}
 
-  rows.push(row('模型', `<code>${esc(res.model || S.model)}</code>`));
+function chip(k, v, cls) {
+  return `<div class="chip${cls ? ' ' + cls : ''}"><span class="ck">${esc(k)}</span>` +
+         `<span class="cv">${v}</span></div>`;
+}
 
-  const sent = r.sent && Object.keys(r.sent).length
-    ? Object.entries(r.sent).map(([k, v]) => `<code>${esc(k)}: ${esc(JSON.stringify(v))}</code>`).join(' ')
-    : '<code>不发送任何推理参数</code>';
-  rows.push(row('推理',
-    `${REASON_LEVEL[r.level] || r.level || '—'} · 写法「${esc(REASON_STYLE[r.style] || r.style || '—')}」→ ${sent}`));
-
-  // 拿不到就说拿不到，别拿 0 冒充「确实没推理」
-  const used = r.used;
-  const usedTxt = (used === null || used === undefined) ? '该服务商没有回报' : `${used} token`;
-  rows.push(row('实际推理', used > 0 ? `<span class="warn">${usedTxt}</span>` : usedTxt));
-
-  // 前缀缓存同理：拿不到就说拿不到，别拿 0 冒充「确实没命中」
-  const cch = res.cached;
-  rows.push(row('前缀缓存', (cch === null || cch === undefined) ? '该服务商没有回报' : `命中 ${cch} token`));
-
-  const pt = Number(u.prompt_tokens || u.input_tokens || 0);
-  const ct = Number(u.completion_tokens || u.output_tokens || 0);
-  if (pt || ct) rows.push(row('本次用量', `输入 ${pt} · 输出 ${ct}`));
-
-  let html = rows.join('');
-
-  /* 最值得报的一种：设成「关闭」了，模型还在烧推理 token。
-     README 里那句「不发字段 ≠ 不推理」说的就是这个。 */
-  if (r.level === 'none' && used > 0) {
-    html += `<div class="warnLine">设成了「关闭」，模型却花掉 ${used} 个推理 token —— 这个写法没能真正关掉推理。改用第一项「reasoning_effort 含 &quot;none&quot;」再测一次；如果服务商拒收，说明这个模型关不掉推理，换个模型更省。</div>`;
-  }
-  if (r.level !== 'none' && used === 0) {
-    html += `<div class="warnLine">档位是「${REASON_LEVEL[r.level] || r.level}」，模型却一个推理 token 都没花 —— 可能是这个模型不支持推理，或者不认这种参数写法。</div>`;
-  }
-
+function paintTestCard(html) {
+  const box = $('testCard');
   box.innerHTML = html;
   box.classList.remove('hidden');
 }
 
-function row(k, v) {
-  return `<div><span class="k">${esc(k)}</span>${v}</div>`;
+function okCard(res) {
+  const r = res.reasoning || {};
+  const u = res.usage || {};
+  const used = r.used;          // null = 服务商没回报，不能当成 0
+  const cch = res.cached;
+  const pt = Number(u.prompt_tokens || u.input_tokens || 0);
+  const ct = Number(u.completion_tokens || u.output_tokens || 0);
+
+  const sent = r.sent && Object.keys(r.sent).length
+    ? Object.entries(r.sent).map(([k, v]) => `${esc(k)}=${esc(JSON.stringify(v))}`).join(' ')
+    : '不发送';
+
+  const chips = [
+    chip('推理档位', REASON_LEVEL[r.level] || r.level || '—'),
+    chip('发出的参数', `<code>${sent}</code>`, 'wide'),
+    chip('实际推理', used == null ? '未回报' : used + ' token',
+         r.level === 'none' && used > 0 ? 'bad' : ''),
+    chip('前缀缓存', cch == null ? '未回报' : cch + ' token'),
+    chip('本次用量', (pt || ct) ? `${pt} 进 / ${ct} 出` : '未回报')
+  ];
+
+  let html = cardHead(res.model || S.model, 'ok', `已连通 · ${res.ms} ms`) +
+             `<div class="mcard-chips">${chips.join('')}</div>`;
+
+  // 试译回来的是带编号的对齐格式（1|…），卡片里只要译文
+  const lines = String(res.sample || '').split('\n')
+    .map((x) => x.trim().replace(/^\d+\s*\|\s*/, '')).filter(Boolean);
+  if (lines.length) {
+    html += `<div class="mcard-sample">${lines.map((x) => `<div>${esc(x)}</div>`).join('')}</div>`;
+  }
+
+  /* 最值得报的一种：设成「关闭」了，模型还在烧推理 token。 */
+  if (r.level === 'none' && used > 0) {
+    html += warnLine(`设成「关闭」却烧了 ${used} 个推理 token。换第一种写法再测，服务商拒收就说明这个模型关不掉推理。`);
+  }
+  if (r.level !== 'none' && used === 0) {
+    html += warnLine(`档位是「${REASON_LEVEL[r.level] || r.level}」却一个推理 token 都没花，可能这个模型不支持推理，或者不认这种写法。`);
+  }
+  return html;
+}
+
+function warnLine(text) {
+  return `<div class="mcard-warn">${esc(text)}</div>`;
 }
 
 function esc(x) {
@@ -389,31 +448,26 @@ function esc(x) {
 }
 
 async function runTest() {
-  const out = $('testOut');
-  out.className = 'testOut';
-  $('testDetail').classList.add('hidden');
+  const btn = $('testBtn');
 
   // 测试按钮本身就是一次用户手势，顺手把缺的地址权限要了
   if (!(await hasApiPermission(S.baseUrl)) && !(await requestApiPermission())) {
-    out.className = 'testOut bad';
-    out.textContent = '没有访问该 API 地址的权限，已取消';
+    paintTestCard(cardHead(S.model, 'bad', '未授权') +
+      '<div class="mcard-err">没有访问该 API 地址的权限，已取消。</div>');
     return;
   }
 
-  out.textContent = '请求中…';
-  $('testBtn').disabled = true;
-
+  paintTestCard(cardHead(S.model, 'wait', '请求中'));
+  btn.disabled = true;
   const res = await chrome.runtime.sendMessage({ type: 'testApi', payload: {} });
-  $('testBtn').disabled = false;
+  btn.disabled = false;
 
   if (!res || !res.ok) {
-    out.className = 'testOut bad';
-    out.textContent = '失败：' + ((res && res.error) || '无响应');
+    paintTestCard(cardHead(S.model, 'bad', '失败') +
+      `<div class="mcard-err">${esc((res && res.error) || '无响应')}</div>`);
     return;
   }
-  out.className = 'testOut ok';
-  out.textContent = `通了（${res.ms}ms）→ ${res.sample.replace(/\n/g, ' / ')}`;
-  paintTestDetail(res);
+  paintTestCard(okCard(res));
   refreshStats();
 }
 

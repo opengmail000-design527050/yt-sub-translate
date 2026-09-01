@@ -36,6 +36,27 @@ function paintSettings() {
   $('fontVal').textContent = S.fontSize;
   setSeg('reasoning', S.reasoning);
   $('reasonHint').textContent = HINTS[S.reasoning] || '';
+  paintModel();
+}
+
+/* 推理三档是对着某一个模型选的 —— 同样的「关闭」，换个模型可能就关不掉了。
+   所以把当前模型写在「推理强度」右边，不用为了确认它跑一趟设置页。
+   模型名取自 settings（运行时的唯一真相），配置档只用来补个悬停说明。 */
+async function paintModel() {
+  const el = $('modelTag');
+  const model = String(S.model || '').trim();
+  el.textContent = model || '未设置模型';
+  el.classList.toggle('none', !model);
+
+  let name = '';
+  try {
+    const got = await chrome.storage.local.get('profiles');
+    const p = got.profiles;
+    const cur = p && Array.isArray(p.list) ? p.list.find((x) => x.id === p.active) : null;
+    name = (cur && cur.name) || '';
+  } catch (_) {}
+  el.title = (name ? `配置「${name}」　·　` : '') +
+             (model ? '模型 ' + model : '还没填模型，去设置页填一个');
 }
 
 function setSeg(id, value) {
@@ -118,9 +139,11 @@ async function refreshStatus() {
   const key = r.active ? r.status : (r.status === 'nosub' ? 'nosub' : 'idle');
   let text = STATUS_TEXT[key] || '—';
   if (r.active && r.segments) {
-    text = (r.status === 'translating' ? '正在翻译' : '已翻译') + ` ${r.translated}/${r.segments} 句`;
+    // 用自带字幕时一个字都没翻，别写成「已翻译」
+    const verb = r.adopted ? '已配上' : (r.status === 'translating' ? '正在翻译' : '已翻译');
+    text = verb + ` ${r.translated}/${r.segments} 句`;
   } else if (!r.active && r.hasTracks && r.needsTranslation === false) {
-    text = '原声已是目标语言，无需翻译';
+    text = r.audioDubbed ? '当前是配音音轨，无需翻译' : '原声已是目标语言，无需翻译';
   }
   if (r.sourceLang && !r.trackLang && key !== 'nosub') {
     text += `　·　识别为 ${langName(r.sourceLang)}`;
@@ -149,6 +172,15 @@ const langName = (code) =>
 function paintSource(r) {
   const el = $('srcText');
   const parts = [];
+
+  /* 这两条比字幕轨列表更要紧，摆最前面：
+     一条解释「为什么这次没花钱」，一条解释「为什么听起来怪」。 */
+  if (r.adopted) {
+    parts.push(`译文用的是视频自带的${langName(r.adopted)}字幕，没花 token`);
+  }
+  if (r.audioDubbed && r.audioLang) {
+    parts.push(`当前音轨是${langName(r.audioLang)}配音${r.active ? '' : ' · 换回原声音轨就会自动翻译'}`);
+  }
 
   if (r.trackLang) {
     parts.push('字幕源：' + langName(r.trackLang) + (r.trackKind === 'asr' ? '（自动字幕）' : ''));
