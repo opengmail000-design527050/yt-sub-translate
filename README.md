@@ -4,11 +4,15 @@
 
 ## 安装
 
-1. Chrome 打开 `chrome://extensions/`
-2. 右上角打开「开发者模式」
-3. 点「加载已解压的扩展程序」，选中 `C:\Users\001\yt-sub-translate` 这个文件夹
-4. 点插件图标 → 右下角「设置」→ 填 API 地址、Key、模型
-5. 点「测试连接」，出现一张写着「已连通」的模型卡就通了
+1. `npm install && npm run build`（内容脚本要打包一次，见下面「开发」）
+2. Chrome 打开 `chrome://extensions/`
+3. 右上角打开「开发者模式」
+4. 点「加载已解压的扩展程序」，选中仓库里的 **`dist`** 文件夹
+5. 装好会自动打开设置页 —— 填 API 地址、Key、模型
+6. 点「测试连接」，出现一张写着「已连通」的模型卡就通了
+
+改完代码要重新 `npm run build`，再去扩展页点一下刷新。`npm run zip` 出的是
+`build/sub-translator-<版本>.zip`，可以直接上传商店或者发给别人。
 
 ## 用法
 
@@ -250,9 +254,13 @@ manifest.json        扩展清单
 common.js            默认配置 + 读写设置 + 接口配置档
 background.js        翻译请求、用量统计、快捷键
 content/
-  inject.js          主世界脚本：劫持 timedtext、读播放器信息
-  content.js         切句、懒调度、叠加层渲染、播放器按钮
+  inject.js          主世界脚本：劫持 timedtext、读播放器信息、自检
+  src/index.js       切句、懒调度、叠加层渲染、播放器按钮（打包入口）
   overlay.css        字幕与按钮样式
+tools/
+  build.mjs          打包进 dist/（内容脚本要打，其余原样复制）
+  zip.mjs            把 dist/ 打成可上传商店的 zip
+dist/                构建产物，加载扩展时选这个目录（不进版本库）
 popup/               弹窗（开关、推理强度、显示）
 options/             设置页（接口配置档、省 token、外观、数据）
 icons/make-icons.js  图标生成脚本（node icons/make-icons.js）
@@ -261,17 +269,15 @@ icons/make-icons.js  图标生成脚本（node icons/make-icons.js）
 ## 测试
 
 ```
-node test/state.test.js
-node test/segments.test.js
-node test/align.test.js
-node test/boot.test.js
-node test/batching.test.js
-node test/profiles.test.js
-node test/reasoning.test.js
-node test/adopt.test.js
+npm test           # 先打包，再跑全部测试文件
+npm run lint       # eslint 最小规则集
+npm run check      # lint + 测试
+node test/state.test.js   # 单独跑一个（需要先 npm run build）
 ```
 
 都用桩环境（假 chrome API + 假 DOM / 假 fetch）真实加载被测文件，不联网、不碰真实存储。
+内容脚本的几个测试加载的是 `dist/content/content.js` —— 打包这一步本身也会出错，
+拿源码去测就永远发现不了。
 
 - `state.test.js` 覆盖状态机里几条出过问题的路径：切视频时的在途请求、上一个视频
   迟到的字幕、来路不明的字幕、字幕轨迟到、播放中改设置、整批错位时的报错、缓存键的
