@@ -2,7 +2,8 @@
   "manifest_version": 3,
   "name": "Sub Translator",
   "version": "0.3.0",
-  "description": "YouTube 英文字幕双语翻译，为 Lex Fridman / Joe Rogan 等长访谈与科技播客优化。",
+  "description": "__MSG_extDescription__",
+  "default_locale": "zh_CN",
   "minimum_chrome_version": "116",
   "permissions": ["storage", "unlimitedStorage"],
   "host_permissions": ["https://www.youtube.com/*", "https://api.openai.com/*"],
@@ -46,7 +47,7 @@
   "commands": {
     "toggle-translate": {
       "suggested_key": { "default": "Alt+Shift+T" },
-      "description": "开关当前视频的翻译字幕"
+      "description": "__MSG_cmdToggle__"
     }
   }
 }

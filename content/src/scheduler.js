@@ -3,6 +3,7 @@
  * 批次大小是自适应的（连续几批干净就加大，一出错位就回落），失败分级（限流自己
  * 回来、配置错误当场认输），每一批都带着 (epoch, batchId) 好让 background 掐得住。
  */
+import { t } from '../../common.js';
 import { S, st, log, flags, updateStatus } from './state.js';
 import { wid } from './segments.js';
 import { cacheGet, cachePut, cacheKey, cacheIndexOp } from './cache.js';
@@ -180,14 +181,15 @@ const BATCH_DEADLINE = 120000;
 
 function withDeadline(p, ms) {
   return new Promise((resolve, reject) => {
-    const t = setTimeout(() => {
-      const e = new Error('后台一直没有回应，这一批先放弃了（可以点重试）');
+    // 别把这个计时器叫 t：会遮住取文案的 t()，而且遮得悄无声息
+    const timer = setTimeout(() => {
+      const e = new Error(t('errBackendSilent', '后台一直没有回应，这一批先放弃了（可以点重试）'));
       e.timeout = true;
       reject(e);
     }, ms);
     Promise.resolve(p).then(
-      (v) => { clearTimeout(t); resolve(v); },
-      (e) => { clearTimeout(t); reject(e); }
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); }
     );
   });
 }
@@ -316,12 +318,12 @@ export async function runBatch(bi) {
       // 整批错位时后端不会进补翻，会返回 ok 但空 map。
       // 这里必须留下错误信息，否则状态会显示「已就绪」而 popup 也不给重试入口。
       b.state = 'err';
-      st.error = '这一批模型没给出可用的译文，可以点重试';
+      st.error = t('errNoUsable', '这一批模型没给出可用的译文，可以点重试');
       st.errorCode = 'format';
     }
   } else {
     b.state = 'err';
-    st.error = (res && res.error) || '翻译失败';
+    st.error = (res && res.error) || t('errFailed', '翻译失败');
     st.errorCode = (res && res.code) || 'network';
     log('批次 #' + batchId + ' [' + st.errorCode + '] ' + st.error);
     // 整批失败：只有拆到底还在错位才算批次太大，401/超时之类不算
@@ -329,7 +331,7 @@ export async function runBatch(bi) {
     /* 限流：background 已经在排队了，这一批自己回来，别让用户去点重试 */
     const wait = Number((res && res.retryAfter) || 0);
     if (autoRetry(b, epoch, wait)) {
-      st.error = '接口限流，' + Math.max(1, Math.round(wait / 1000)) + ' 秒后自动重试';
+      st.error = t('errRateWait', '接口限流，$1 秒后自动重试', [String(Math.max(1, Math.round(wait / 1000)))]);
       st.errorCode = 'rate';
     }
   }

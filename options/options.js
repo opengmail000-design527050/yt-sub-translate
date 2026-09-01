@@ -1,6 +1,7 @@
 import { DEFAULTS, getSettings, setSettings, resolveTargetName, uiLanguage,
          originPattern, hasApiPermission,
-         PROFILE_KEYS, getProfiles, saveProfiles, newProfileId, pickProfile, FONT_STACKS } from '../common.js';
+         PROFILE_KEYS, getProfiles, saveProfiles, newProfileId, pickProfile, FONT_STACKS,
+         t, applyI18n } from '../common.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -11,22 +12,22 @@ const TEXT_FIELDS = ['baseUrl', 'apiKey', 'model', 'targetLang',
 
 
 const FONT_NOTES = {
-  serif: '字形有呼吸感，久看不累。',
-  sans: '笔画最实，小字号或低画质下最稳。',
-  kai: '有手写味，笔画细，建议配大字号和深底色。'
+  serif: () => t('fontSerifNote', '字形有呼吸感，久看不累。'),
+  sans: () => t('fontSansNote', '笔画最实，小字号或低画质下最稳。'),
+  kai: () => t('fontKaiNote', '有手写味，笔画细，建议配大字号和深底色。')
 };
 const RANGE_FIELDS = {
   origScale: (v) => Number(v).toFixed(2),
-  bgOpacity: (v) => (Number(v) <= 0 ? '全透明' : Number(v).toFixed(2)),
+  bgOpacity: (v) => (Number(v) <= 0 ? t('vTransparent', '全透明') : Number(v).toFixed(2)),
   maxWidth: (v) => v + '%',
-  cacheDays: (v) => (Number(v) >= 365 ? '1 年' : v + ' 天'),
-  cacheMax: (v) => v + ' 个'
+  cacheDays: (v) => (Number(v) >= 365 ? t('vOneYear', '1 年') : t('vDays', '$1 天', [String(v)])),
+  cacheMax: (v) => t('vVideos', '$1 个', [String(v)])
 };
 
 const DENSITY_NOTES = {
-  compact: '框最矮，长句会切得略碎。',
-  standard: '推荐。整句优先，长句才在逗号处切。',
-  full: '译文最连贯，但一屏可能到四行。'
+  compact: () => t('densityCompactNote', '框最矮，长句会切得略碎。'),
+  standard: () => t('densityStandardNote', '推荐。整句优先，长句才在逗号处切。'),
+  full: () => t('densityFullNote', '译文最连贯，但一屏可能到四行。')
 };
 const CHECK_FIELDS = ['hideNative', 'autoScale'];
 
@@ -39,6 +40,8 @@ let S = Object.assign({}, DEFAULTS);
 let P = { active: '', list: [] };
 
 async function init() {
+  applyI18n();                 // 页面上写死的中文先换成当前语言
+  paintFoot();
   S = await getSettings();
   P = await getProfiles();
 
@@ -48,6 +51,13 @@ async function init() {
   paintAll();
   bind();
   refreshStats();
+}
+
+/* 页脚那句话里带着版本号 —— 以前是写死的 v0.1.0，一路发到 0.3.0 都没人记得改。 */
+function paintFoot() {
+  let v = '';
+  try { v = chrome.runtime.getManifest().version; } catch (_) {}
+  $('pageFoot').textContent = t('optFooter', '改动即时生效') + (v ? ' · v' + v : '');
 }
 
 /** 把 S / P 整个刷到界面上。初始化和「恢复默认」都走这里。 */
@@ -120,12 +130,12 @@ function paintProfiles() {
   sel.value = P.active;
   // 最后一档不给删，否则就没有任何配置可用了
   $('pfDel').disabled = P.list.length <= 1;
-  disarm($('pfDel'), '删除');
+  disarm($('pfDel'), t('optDelete', '删除'));
 }
 
 function hideKey() {
   $('apiKey').type = 'password';
-  $('toggleKey').textContent = '显示';
+  $('toggleKey').textContent = t('optShow', '显示');
 }
 
 /** 把当前设置里的接口字段刷回表单（切换配置之后用） */
@@ -139,7 +149,7 @@ async function switchProfile(id) {
   const p = P.list.find((x) => x.id === id);
   if (!p) return;
   P = await saveProfiles({ active: id, list: P.list });
-  await commit(pickProfile(p), `已切换到「${p.name}」`);
+  await commit(pickProfile(p), t('toastSwitched', '已切换到「$1」', [p.name]));
   paintApiFields();
   paintProfiles();
 }
@@ -147,10 +157,10 @@ async function switchProfile(id) {
 /** from 为空 = 建一份干净的；传当前档 = 复制一份 */
 async function addProfile(from) {
   const base = from
-    ? Object.assign({ id: newProfileId(), name: uniqueName(from.name + ' 副本') }, pickProfile(from))
-    : Object.assign({ id: newProfileId(), name: uniqueName('新配置') }, pickProfile(DEFAULTS), { apiKey: '' });
+    ? Object.assign({ id: newProfileId(), name: uniqueName(from.name + ' ' + t('pfCopySuffix', '副本')) }, pickProfile(from))
+    : Object.assign({ id: newProfileId(), name: uniqueName(t('pfNewName', '新配置')) }, pickProfile(DEFAULTS), { apiKey: '' });
   P = await saveProfiles({ active: base.id, list: P.list.concat([base]) });
-  await commit(pickProfile(base), `已新建「${base.name}」`);
+  await commit(pickProfile(base), t('toastCreated', '已新建「$1」', [base.name]));
   paintApiFields();
   paintProfiles();
   startRename();
@@ -159,12 +169,12 @@ async function addProfile(from) {
 /* 删除是不可逆的（Key 就没了），所以走上膛-确认那一套 */
 async function deleteProfile() {
   if (P.list.length <= 1) return;
-  if (!armOnce($('pfDel'), '删除', '确认删除？')) return;
+  if (!armOnce($('pfDel'), t('optDelete', '删除'), t('confirmDelete', '确认删除？'))) return;
 
   const gone = activeProfile();
   const list = P.list.filter((x) => x.id !== gone.id);
   P = await saveProfiles({ active: list[0].id, list });
-  await commit(pickProfile(list[0]), `已删除「${gone.name}」`);
+  await commit(pickProfile(list[0]), t('toastDeleted', '已删除「$1」', [gone.name]));
   paintApiFields();
   paintProfiles();
 }
@@ -175,7 +185,7 @@ function startRename() {
   inp.value = activeProfile().name;
   sel.classList.add('hidden');
   inp.classList.remove('hidden');
-  $('pfRename').textContent = '完成';
+  $('pfRename').textContent = t('optDone', '完成');
   inp.focus();
   inp.select();
 }
@@ -189,12 +199,12 @@ async function endRename(save) {
     if (name && name !== cur.name) {
       cur.name = uniqueName(name);
       P = await saveProfiles(P);
-      toast('已重命名');
+      toast(t('toastRenamed', '已重命名'));
     }
   }
   inp.classList.add('hidden');
   sel.classList.remove('hidden');
-  $('pfRename').textContent = '重命名';
+  $('pfRename').textContent = t('optRename', '重命名');
   paintProfiles();
 }
 
@@ -206,24 +216,24 @@ function paintPreview() {
   pv.style.background = 'rgba(0,0,0,' + bg + ')';
   pv.classList.toggle('pv-no-bg', bg <= 0);   // 与播放器里的 .ytst-no-bg 保持一致
   pv.style.maxWidth = (S.maxWidth || 88) + '%';
-  if (stage) stage.title = `字幕框最宽 ${S.maxWidth || 88}%`;
+  if (stage) stage.title = t('optMaxWidthTip', '字幕框最宽 $1%', [String(S.maxWidth || 88)]);
   pv.querySelector('.pv-orig').style.fontSize = Math.round(S.fontSize * S.origScale) + 'px';
   pv.querySelector('.pv-trans').style.fontSize = S.fontSize + 'px';
   pv.querySelector('.pv-orig').style.display = S.layout === 'transOnly' ? 'none' : '';
-  $('fontNote').textContent = FONT_NOTES[S.fontFamily] || '';
-  $('densityNote').textContent = DENSITY_NOTES[S.density] || '';
+  $('fontNote').textContent = FONT_NOTES[S.fontFamily] ? FONT_NOTES[S.fontFamily]() : '';
+  $('densityNote').textContent = DENSITY_NOTES[S.density] ? DENSITY_NOTES[S.density]() : '';
 
-  const t = String(S.targetLang || 'auto').trim();
-  $('langNote').textContent = (!t || t.toLowerCase() === 'auto')
-    ? `auto：跟随浏览器（${uiLanguage()}），当前译成「${resolveTargetName(S)}」。`
-    : `固定译成「${t}」，改回 auto 则跟随浏览器。`;
+  const tl = String(S.targetLang || 'auto').trim();
+  $('langNote').textContent = (!tl || tl.toLowerCase() === 'auto')
+    ? t('optLangAuto', 'auto：跟随浏览器（$1），当前译成「$2」。', [uiLanguage(), resolveTargetName(S)])
+    : t('optLangFixed', '固定译成「$1」，改回 auto 则跟随浏览器。', [tl]);
 }
 
 function paintPos() {
   const custom = typeof S.posX === 'number' && typeof S.posY === 'number';
   $('posOut').textContent = custom
-    ? `当前位置 ${Math.round(S.posX)}% / ${Math.round(S.posY)}%`
-    : '当前是默认位置';
+    ? t('optPosCustom', '当前位置 $1% / $2%', [String(Math.round(S.posX)), String(Math.round(S.posY))])
+    : t('optPosDefault', '当前是默认位置');
   $('resetPos').disabled = !custom;
 }
 
@@ -237,7 +247,7 @@ async function paintPerm() {
   const origin = originPattern(S.baseUrl);
   const ok = !origin || (await hasApiPermission(S.baseUrl));
   note.classList.toggle('hidden', ok);
-  if (!ok) $('permText').textContent = `还没有访问 ${origin.slice(0, -2)} 的权限，翻译会失败。`;
+  if (!ok) $('permText').textContent = t('optPermMissing', '还没有访问 $1 的权限，翻译会失败。', [origin.slice(0, -2)]);
 }
 
 /** 返回是否拿到了权限。必须由用户点击触发，Chrome 才允许弹这个授权框。 */
@@ -247,7 +257,7 @@ async function requestApiPermission() {
   let granted = false;
   try { granted = await chrome.permissions.request({ origins: [origins] }); } catch (_) {}
   await paintPerm();
-  if (granted) toast('已授权');
+  if (granted) toast(t('toastGranted', '已授权'));
   return granted;
 }
 
@@ -272,7 +282,7 @@ function bind() {
   $('toggleKey').addEventListener('click', () => {
     const el = $('apiKey');
     if (el.type === 'text') hideKey();
-    else { el.type = 'text'; $('toggleKey').textContent = '隐藏'; }
+    else { el.type = 'text'; $('toggleKey').textContent = t('optHide', '隐藏'); }
   });
 
   $('profileSel').addEventListener('change', () => switchProfile($('profileSel').value));
@@ -300,7 +310,7 @@ function bind() {
   $('resetPos').addEventListener('click', () => commit({ posX: null, posY: null }));
   $('resetAll').addEventListener('click', resetAll);
   // 勾不勾决定确认时的措辞，改了就把已上膛的按钮放下
-  $('keepApi').addEventListener('change', () => disarm($('resetAll'), '恢复默认设置'));
+  $('keepApi').addEventListener('change', () => disarm($('resetAll'), t('optResetAll', '恢复默认设置')));
 
   // 视频里拖动过字幕框后，这里的位置显示跟着更新
   chrome.storage.onChanged.addListener((ch, area) => {
@@ -325,7 +335,7 @@ async function commit(patch, msg) {
   paintPreview();
   paintPos();
   if ('baseUrl' in patch) paintPerm();
-  toast(msg || '已保存');
+  toast(msg || t('toastSaved', '已保存'));
   broadcast();
 }
 
@@ -339,7 +349,8 @@ async function commit(patch, msg) {
  * ------------------------------------------------------------------ */
 async function resetAll() {
   const keep = $('keepApi').checked;
-  if (!armOnce($('resetAll'), '恢复默认设置', keep ? '确认恢复？' : '确认恢复（含接口）？')) return;
+  if (!armOnce($('resetAll'), t('optResetAll', '恢复默认设置'),
+                keep ? t('confirmReset', '确认恢复？') : t('confirmResetAll', '确认恢复（含接口）？'))) return;
 
   const next = Object.assign({}, DEFAULTS);
   if (keep) Object.assign(next, pickProfile(S));
@@ -348,26 +359,28 @@ async function resetAll() {
 
   if (!keep) {
     // 接口也一并出厂：只留一档空的「默认」
-    const one = Object.assign({ id: newProfileId(), name: '默认' }, pickProfile(DEFAULTS));
+    const one = Object.assign({ id: newProfileId(), name: t('pfDefaultName', '默认') }, pickProfile(DEFAULTS));
     P = await saveProfiles({ active: one.id, list: [one] });
   }
 
   $('testCard').classList.add('hidden');
   paintAll();
-  toast(keep ? '已恢复默认（模型与接口保留）' : '已全部恢复默认');
+  toast(keep ? t('toastResetKept', '已恢复默认（模型与接口保留）') : t('toastResetAll', '已全部恢复默认'));
   broadcast();
 }
 
 async function broadcast() {
   try {
     const tabs = await chrome.tabs.query({ url: '*://*.youtube.com/*' });
-    for (const t of tabs) {
-      try { await chrome.tabs.sendMessage(t.id, { type: 'settingsChanged' }); } catch (_) {}
+    for (const tab of tabs) {
+      try { await chrome.tabs.sendMessage(tab.id, { type: 'settingsChanged' }); } catch (_) {}
     }
   } catch (_) {}
 }
 
-const REASON_LEVEL = { none: '关闭', low: '低', medium: '中' };
+const reasonLevel = (k) => ({
+  none: t('popupOff', '关闭'), low: t('popupLow', '低'), medium: t('popupMedium', '中')
+}[k] || k);
 
 /* ------------------------------------------------------------------ *
  * 测试连接的结果卡
@@ -402,18 +415,20 @@ function okCard(res) {
 
   const sent = r.sent && Object.keys(r.sent).length
     ? Object.entries(r.sent).map(([k, v]) => `${esc(k)}=${esc(JSON.stringify(v))}`).join(' ')
-    : '不发送';
+    : t('cardNotSent', '不发送');
 
   const chips = [
-    chip('推理档位', REASON_LEVEL[r.level] || r.level || '—'),
-    chip('发出的参数', `<code>${sent}</code>`, 'wide'),
-    chip('实际推理', used == null ? '未回报' : used + ' token',
+    chip(t('cardLevel', '推理档位'), reasonLevel(r.level) || '—'),
+    chip(t('cardSent', '发出的参数'), `<code>${sent}</code>`, 'wide'),
+    chip(t('cardUsed', '实际推理'), used == null ? t('cardNotReported', '未回报') : used + ' token',
          r.level === 'none' && used > 0 ? 'bad' : ''),
-    chip('前缀缓存', cch == null ? '未回报' : cch + ' token'),
-    chip('本次用量', (pt || ct) ? `${pt} 进 / ${ct} 出` : '未回报')
+    chip(t('cardPrefixCache', '前缀缓存'), cch == null ? t('cardNotReported', '未回报') : cch + ' token'),
+    chip(t('cardUsage', '本次用量'), (pt || ct)
+      ? t('cardInOut', '$1 进 / $2 出', [String(pt), String(ct)])
+      : t('cardNotReported', '未回报'))
   ];
 
-  let html = cardHead(res.model || S.model, 'ok', `已连通 · ${res.ms} ms`) +
+  let html = cardHead(res.model || S.model, 'ok', t('cardOk', '已连通 · $1 ms', [String(res.ms)])) +
              `<div class="mcard-chips">${chips.join('')}</div>`;
 
   // 试译回来的是带编号的对齐格式（1|…），卡片里只要译文
@@ -425,10 +440,14 @@ function okCard(res) {
 
   /* 最值得报的一种：设成「关闭」了，模型还在烧推理 token。 */
   if (r.level === 'none' && used > 0) {
-    html += warnLine(`设成「关闭」却烧了 ${used} 个推理 token。换第一种写法再测，服务商拒收就说明这个模型关不掉推理。`);
+    html += warnLine(t('cardWarnBurning',
+      '设成「关闭」却烧了 $1 个推理 token。换第一种写法再测，服务商拒收就说明这个模型关不掉推理。',
+      [String(used)]));
   }
   if (r.level !== 'none' && used === 0) {
-    html += warnLine(`档位是「${REASON_LEVEL[r.level] || r.level}」却一个推理 token 都没花，可能这个模型不支持推理，或者不认这种写法。`);
+    html += warnLine(t('cardWarnIdle',
+      '档位是「$1」却一个推理 token 都没花，可能这个模型不支持推理，或者不认这种写法。',
+      [reasonLevel(r.level)]));
   }
   return html;
 }
@@ -446,19 +465,19 @@ async function runTest() {
 
   // 测试按钮本身就是一次用户手势，顺手把缺的地址权限要了
   if (!(await hasApiPermission(S.baseUrl)) && !(await requestApiPermission())) {
-    paintTestCard(cardHead(S.model, 'bad', '未授权') +
-      '<div class="mcard-err">没有访问该 API 地址的权限，已取消。</div>');
+    paintTestCard(cardHead(S.model, 'bad', t('cardNoPerm', '未授权')) +
+      '<div class="mcard-err">' + esc(t('cardNoPermBody', '没有访问该 API 地址的权限，已取消。')) + '</div>');
     return;
   }
 
-  paintTestCard(cardHead(S.model, 'wait', '请求中'));
+  paintTestCard(cardHead(S.model, 'wait', t('cardWaiting', '请求中')));
   btn.disabled = true;
   const res = await chrome.runtime.sendMessage({ type: 'testApi', payload: {} });
   btn.disabled = false;
 
   if (!res || !res.ok) {
-    paintTestCard(cardHead(S.model, 'bad', '失败') +
-      `<div class="mcard-err">${esc((res && res.error) || '无响应')}</div>`);
+    paintTestCard(cardHead(S.model, 'bad', t('cardFailed', '失败')) +
+      `<div class="mcard-err">${esc((res && res.error) || t('cardNoResponse', '无响应'))}</div>`);
     return;
   }
   paintTestCard(okCard(res));
@@ -473,21 +492,23 @@ async function refreshStats() {
 
   const parts = [];
   if (s && s.requests) {
-    parts.push(`累计 ${s.requests} 次请求`);
-    parts.push(`输入 ${fmt(s.prompt)} / 输出 ${fmt(s.completion)} tokens`);
+    parts.push(t('statRequests', '累计 $1 次请求', [String(s.requests)]));
+    parts.push(t('statTokens', '输入 $1 / 输出 $2 tokens', [fmt(s.prompt), fmt(s.completion)]));
   } else {
-    parts.push('还没有用量记录');
+    parts.push(t('statNone', '还没有用量记录'));
   }
 
   /* 对齐的账。改了提示词或上下文之后，就靠这一行判断模型的逐行对齐是变好还是
      变差 —— 译文好不好没法自动判，错位有客观指纹。 */
   if (s && s.batches) {
     const pct = Math.round((s.dirty || 0) / s.batches * 100);
-    const bits = [`翻了 ${s.batches} 批`];
-    bits.push(s.dirty ? `错位 ${s.dirty} 批（${pct}%）` : '没出过错位');
-    if (s.split) bits.push(`拆块 ${s.split} 次`);
-    if (s.repaired) bits.push(`补翻 ${s.repaired} 行`);
-    if (s.dropped) bits.push(`放弃 ${s.dropped} 行`);
+    const bits = [t('statBatches', '翻了 $1 批', [String(s.batches)])];
+    bits.push(s.dirty
+      ? t('statDirty', '错位 $1 批（$2%）', [String(s.dirty), String(pct)])
+      : t('statClean', '没出过错位'));
+    if (s.split) bits.push(t('statSplit', '拆块 $1 次', [String(s.split)]));
+    if (s.repaired) bits.push(t('statRepaired', '补翻 $1 行', [String(s.repaired)]));
+    if (s.dropped) bits.push(t('statDropped', '放弃 $1 行', [String(s.dropped)]));
     parts.push(bits.join('，'));
   }
 
@@ -497,21 +518,22 @@ async function refreshStats() {
      比现在 900 不缓存还贵）。 */
   if (s && s.requests) {
     if (!s.cachedReports) {
-      parts.push('前缀缓存：服务商没回报');
+      parts.push(t('statNoPrefixReport', '前缀缓存：服务商没回报'));
     } else {
       const pct = s.prompt ? Math.round((s.cached || 0) / s.prompt * 100) : 0;
-      parts.push(`前缀缓存命中 ${fmt(s.cached || 0)}（占输入 ${pct}%）`);
+      parts.push(t('statPrefixHit', '前缀缓存命中 $1（占输入 $2%）', [fmt(s.cached || 0), String(pct)]));
     }
   }
 
   let bytes = 0;
   try { bytes = await chrome.storage.local.getBytesInUse(null); } catch (_) {}
-  parts.push(`已缓存 ${keys.length} 个视频${bytes ? '（' + fmtBytes(bytes) + '）' : ''}`);
+  parts.push(t('statCached', '已缓存 $1 个视频', [String(keys.length)]) +
+             (bytes ? '（' + fmtBytes(bytes) + '）' : ''));
 
   if (keys.length) {
     const oldest = Math.min(...keys.map((k) => idx[k] || Date.now()));
     const days = Math.floor((Date.now() - oldest) / 86400000);
-    parts.push(`最早一条 ${days} 天前用过`);
+    parts.push(t('statOldest', '最早一条 $1 天前用过', [String(days)]));
   }
 
   $('statLine').textContent = parts.join(' · ');
@@ -522,7 +544,9 @@ async function refreshStats() {
 async function clearCache() {
   let res = null;
   try { res = await chrome.runtime.sendMessage({ type: 'cacheIndex', payload: { op: 'clear' } }); } catch (_) {}
-  toast(res && res.ok ? `已清空 ${res.removed} 个视频的缓存` : '清空失败，请重试');
+  toast(res && res.ok
+    ? t('toastCacheCleared', '已清空 $1 个视频的缓存', [String(res.removed)])
+    : t('toastCacheClearFailed', '清空失败，请重试'));
   refreshStats();
 }
 
@@ -534,7 +558,7 @@ function fmtBytes(n) {
 
 async function resetStats() {
   await chrome.storage.local.remove('stats');
-  toast('用量已归零');
+  toast(t('toastStatsReset', '用量已归零'));
   refreshStats();
 }
 

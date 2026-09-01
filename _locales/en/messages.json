@@ -1,0 +1,652 @@
+{
+  "extDescription": {
+    "message": "Bilingual subtitles for YouTube, tuned for long interviews and tech podcasts.",
+    "description": "One-line description in the store and the extensions list"
+  },
+  "cmdToggle": {
+    "message": "Toggle translated subtitles for this video",
+    "description": "Keyboard shortcut description"
+  },
+  "boxDragTip": {
+    "message": "Drag to move · double-click to reset"
+  },
+  "boxWidthTip": {
+    "message": "Drag to resize the box · double-click to reset"
+  },
+  "boxError": {
+    "message": "· translation failed — open the extension popup ·"
+  },
+  "btnTitle": {
+    "message": "Bilingual subtitles (Alt+Shift+T)"
+  },
+  "btnLabel": {
+    "message": "CC"
+  },
+  "errBackendSilent": {
+    "message": "The background never answered; this batch was dropped (you can retry)"
+  },
+  "errNoUsable": {
+    "message": "The model returned nothing usable for this batch — you can retry"
+  },
+  "errFailed": {
+    "message": "Translation failed"
+  },
+  "errRateWait": {
+    "message": "Rate limited — retrying automatically in $1 s"
+  },
+  "stIdle": {
+    "message": "Off"
+  },
+  "stWaiting": {
+    "message": "Fetching subtitles…"
+  },
+  "stReady": {
+    "message": "Subtitles ready"
+  },
+  "stTranslating": {
+    "message": "Translating…"
+  },
+  "stError": {
+    "message": "Something went wrong"
+  },
+  "stNoSub": {
+    "message": "This video has no usable subtitle track"
+  },
+  "stNoSubLang": {
+    "message": "No usable subtitle track (audio detected as $1)"
+  },
+  "stDetected": {
+    "message": "detected as $1"
+  },
+  "stDubbed": {
+    "message": "This is a dubbed audio track — nothing to translate"
+  },
+  "stSameLang": {
+    "message": "The original audio is already in your target language"
+  },
+  "stNotReady": {
+    "message": "Page not ready — try reloading"
+  },
+  "stPlayerChanged": {
+    "message": "YouTube changed; the extension can't read the player"
+  },
+  "progAdopted": {
+    "message": "Matched $1/$2 lines"
+  },
+  "progRunning": {
+    "message": "Translating $1/$2 lines"
+  },
+  "progDone": {
+    "message": "Translated $1/$2 lines"
+  },
+  "unLive": {
+    "message": "Live streams aren't supported"
+  },
+  "unUpcoming": {
+    "message": "The premiere hasn't started yet"
+  },
+  "unShorts": {
+    "message": "Shorts aren't supported"
+  },
+  "unNoPlayer": {
+    "message": "There's no player on this page"
+  },
+  "unOther": {
+    "message": "This page isn't supported"
+  },
+  "offEmbed": {
+    "message": "Embedded players aren't supported — open the video on YouTube"
+  },
+  "offSubdomain": {
+    "message": "Only video pages on www.youtube.com are supported"
+  },
+  "offNotYoutube": {
+    "message": "Not a YouTube page"
+  },
+  "errNoKey": {
+    "message": "No API key yet"
+  },
+  "errNoPerm": {
+    "message": "This API address hasn't been granted access"
+  },
+  "errAuth": {
+    "message": "The API key is wrong, or it lacks permission"
+  },
+  "errModel": {
+    "message": "The endpoint rejected the request — usually the model name or the reasoning parameter style"
+  },
+  "errRate": {
+    "message": "Rate limited — it will retry automatically"
+  },
+  "errServer": {
+    "message": "The provider had an error"
+  },
+  "errTimeout": {
+    "message": "The request timed out"
+  },
+  "errFormat": {
+    "message": "The model didn't return one line per input line"
+  },
+  "errNetwork": {
+    "message": "Can't reach the endpoint — check your network and API address"
+  },
+  "hintNone": {
+    "message": "Off is usually enough for subtitles: fastest and cheapest."
+  },
+  "hintLow": {
+    "message": "A little thinking — steadier on long sentences, puns and jargon."
+  },
+  "hintMedium": {
+    "message": "Most faithful, but clearly slower and pricier. Save it for hard interviews."
+  },
+  "srcMissing": {
+    "message": "Missing: $1　·　waiting for an extension update"
+  },
+  "srcWaitUpdate": {
+    "message": "Waiting for an extension update"
+  },
+  "srcAdopted": {
+    "message": "Using the video's own $1 subtitles — no tokens spent"
+  },
+  "srcDubbed": {
+    "message": "Current audio track is $1 dubbing"
+  },
+  "srcDubbedHint": {
+    "message": "switch back to the original audio and it translates again"
+  },
+  "srcTrack": {
+    "message": "Subtitle source: $1"
+  },
+  "srcAsr": {
+    "message": " (auto-generated)"
+  },
+  "srcTracks": {
+    "message": "Subtitle tracks: $1"
+  },
+  "srcMore": {
+    "message": "$1 and $2 in total"
+  },
+  "srcOnlyOne": {
+    "message": "This video has only this one subtitle track"
+  },
+  "srcNoAudioTrack": {
+    "message": "No $1 subtitle track — the existing track has to serve as the source"
+  },
+  "usageNone": {
+    "message": "No tokens used yet"
+  },
+  "usageTotal": {
+    "message": "$1 tokens total · $2 requests"
+  },
+  "noModel": {
+    "message": "No model set"
+  },
+  "pfCurrent": {
+    "message": "Profile “$1”"
+  },
+  "pfModel": {
+    "message": "Model $1"
+  },
+  "pfNoModel": {
+    "message": "No model yet — set one in options"
+  },
+  "pfClickToSwitch": {
+    "message": "click to switch profile"
+  },
+  "pfManage": {
+    "message": "Manage profiles…"
+  },
+  "toastSwitched": {
+    "message": "Switched to “$1”"
+  },
+  "diagCopied": {
+    "message": "Diagnostics copied (no API key included)"
+  },
+  "diagCopyFailed": {
+    "message": "Copy failed — printed to the console instead"
+  },
+  "popupMaster": {
+    "message": "Master switch"
+  },
+  "popupNoVideo": {
+    "message": "No video detected"
+  },
+  "popupRetry": {
+    "message": "Retry failed batches"
+  },
+  "popupPurge": {
+    "message": "Subtitles out of sync? Re-translate this video"
+  },
+  "popupPurgeTip": {
+    "message": "Throw away the cached translation for this video and start over"
+  },
+  "popupPurging": {
+    "message": "Re-translating…"
+  },
+  "popupSetup": {
+    "message": "No endpoint configured yet — add an API address and key"
+  },
+  "popupToOptions": {
+    "message": "Open options"
+  },
+  "popupToGrant": {
+    "message": "Grant access"
+  },
+  "popupReasoning": {
+    "message": "Reasoning effort"
+  },
+  "popupOff": {
+    "message": "Off"
+  },
+  "popupLow": {
+    "message": "Low"
+  },
+  "popupMedium": {
+    "message": "Medium"
+  },
+  "popupFontSize": {
+    "message": "Font size"
+  },
+  "popupFontHint": {
+    "message": "Scales up with the player in fullscreen; this is the baseline for a small window."
+  },
+  "popupAutoStart": {
+    "message": "Start automatically on foreign-language videos"
+  },
+  "popupCopyDiag": {
+    "message": "Copy diagnostics"
+  },
+  "popupCopyDiagTip": {
+    "message": "Copy recent status, errors and request summaries for a bug report (no API key)"
+  },
+  "popupOptions": {
+    "message": "Options"
+  },
+  "optTitle": {
+    "message": "Sub Translator · Options"
+  },
+  "optSub": {
+    "message": "Detects the spoken language and translates YouTube subtitles into one you read at a glance — bilingual by default."
+  },
+  "optApi": {
+    "message": "Model & endpoint"
+  },
+  "optProfile": {
+    "message": "Profile"
+  },
+  "optProfileNamePh": {
+    "message": "Name this profile"
+  },
+  "optRename": {
+    "message": "Rename"
+  },
+  "optNew": {
+    "message": "New"
+  },
+  "optCopy": {
+    "message": "Duplicate"
+  },
+  "optDelete": {
+    "message": "Delete"
+  },
+  "optDone": {
+    "message": "Done"
+  },
+  "optShow": {
+    "message": "Show"
+  },
+  "optHide": {
+    "message": "Hide"
+  },
+  "optGrant": {
+    "message": "Grant access"
+  },
+  "optProfileNote": {
+    "message": "The five fields on this card belong to the current profile; every other setting is shared. Switching profiles re-translates existing subtitles."
+  },
+  "optBaseUrl": {
+    "message": "API address"
+  },
+  "optBaseUrlNote": {
+    "message": "Any OpenAI-compatible endpoint; ending at /v1 is enough. If it is already a full path, add # at the end."
+  },
+  "optApiKey": {
+    "message": "API key"
+  },
+  "optKeyNote": {
+    "message": "Stored only in this browser. Never synced, never sent anywhere else."
+  },
+  "optModel": {
+    "message": "Model"
+  },
+  "optModelNote": {
+    "message": "Changing models means changing this field only."
+  },
+  "optTargetLang": {
+    "message": "Translate into"
+  },
+  "optLangAuto": {
+    "message": "auto: follows the browser ($1); currently translating into “$2”."
+  },
+  "optLangFixed": {
+    "message": "Always translating into “$1”. Set it back to auto to follow the browser."
+  },
+  "optReasoningStyle": {
+    "message": "Reasoning parameter style"
+  },
+  "optStyleEffortNone": {
+    "message": "reasoning_effort with \"none\" (GPT-5 family, recommended)"
+  },
+  "optStyleEffort": {
+    "message": "reasoning_effort, field omitted when off · conservative"
+  },
+  "optStyleThinking": {
+    "message": "enable_thinking (Qwen / DeepSeek style)"
+  },
+  "optStyleOff": {
+    "message": "Never send reasoning parameters"
+  },
+  "optStyleNote": {
+    "message": "This only decides which field name is sent; the level is chosen in the popup. Only the first option can truly turn reasoning off — switch styles only when the provider answers 400."
+  },
+  "optTest": {
+    "message": "Test connection"
+  },
+  "optSaveToken": {
+    "message": "Save tokens"
+  },
+  "optSaveTokenLead": {
+    "message": "Batching, look-ahead, concurrency, context and caching are already tuned for long podcasts and are no longer exposed. This section only controls how long the cache lives."
+  },
+  "optCacheDays": {
+    "message": "Keep cache for"
+  },
+  "optCacheDaysNote": {
+    "message": "Cleared only after this long without being watched; rewatching restarts the clock."
+  },
+  "optCacheMax": {
+    "message": "Max cached videos"
+  },
+  "optCacheMaxNote": {
+    "message": "Above this, the least recently watched go first."
+  },
+  "optLook": {
+    "message": "Subtitle appearance"
+  },
+  "optLayout": {
+    "message": "Layout"
+  },
+  "optLayoutBoth": {
+    "message": "Bilingual (original + translation)"
+  },
+  "optLayoutTransOnly": {
+    "message": "Translation only"
+  },
+  "optDensity": {
+    "message": "Subtitle length"
+  },
+  "optDensityCompact": {
+    "message": "Compact · fits one line where possible (~96 chars)"
+  },
+  "optDensityStandard": {
+    "message": "Standard · balances completeness and height (~130 chars)"
+  },
+  "optDensityFull": {
+    "message": "Full · never splits long sentences (~180 chars)"
+  },
+  "optFont": {
+    "message": "Font"
+  },
+  "optFontSerif": {
+    "message": "Elegant serif · Georgia + Source Han Serif"
+  },
+  "optFontSans": {
+    "message": "Modern sans · Inter + Source Han Sans"
+  },
+  "optFontKai": {
+    "message": "Bookish kai · Constantia + KaiTi"
+  },
+  "optOrigScale": {
+    "message": "Original text size"
+  },
+  "optOrigScaleNote": {
+    "message": "Original and translation share one colour; only size separates them."
+  },
+  "optBgOpacity": {
+    "message": "Backdrop opacity"
+  },
+  "optBgNote": {
+    "message": "Fully transparent at the far left, leaving only outlined text. Keep a little for bright videos."
+  },
+  "optMaxWidth": {
+    "message": "Max subtitle width"
+  },
+  "optMaxWidthTip": {
+    "message": "Subtitle box at most $1% wide"
+  },
+  "optWidthNote": {
+    "message": "The box hugs its content; this is the upper bound. Wider means fewer wrapped lines."
+  },
+  "optAutoScale": {
+    "message": "Scale font with the picture"
+  },
+  "optAutoScaleNote": {
+    "message": " (scales up in fullscreen, never down)"
+  },
+  "optHideNative": {
+    "message": "Hide YouTube's own subtitles"
+  },
+  "optHideNativeNote": {
+    "message": " (avoids double subtitles)"
+  },
+  "optResetPos": {
+    "message": "Put the box back at bottom centre"
+  },
+  "optDragNote": {
+    "message": "Hover the subtitle box in the video: the dot moves it, the bars resize it, double-click resets."
+  },
+  "optPosCustom": {
+    "message": "Current position $1% / $2%"
+  },
+  "optPosDefault": {
+    "message": "Currently at the default position"
+  },
+  "optPermMissing": {
+    "message": "No permission to reach $1 yet — translation will fail."
+  },
+  "optData": {
+    "message": "Data"
+  },
+  "optClearCache": {
+    "message": "Clear translation cache"
+  },
+  "optResetStats": {
+    "message": "Reset usage stats"
+  },
+  "optReset": {
+    "message": "Restore defaults"
+  },
+  "optResetLead": {
+    "message": "Puts every setting back to factory values. Cache and usage stats are left alone."
+  },
+  "optKeepApi": {
+    "message": "Keep model and endpoint"
+  },
+  "optKeepApiNote": {
+    "message": " (profiles, address, key, model, target language, reasoning style)"
+  },
+  "optResetAll": {
+    "message": "Restore defaults"
+  },
+  "optResetHint": {
+    "message": "Click twice to confirm. Cannot be undone."
+  },
+  "optFooter": {
+    "message": "Changes apply immediately"
+  },
+  "vTransparent": {
+    "message": "transparent"
+  },
+  "vOneYear": {
+    "message": "1 year"
+  },
+  "vDays": {
+    "message": "$1 days"
+  },
+  "vVideos": {
+    "message": "$1 videos"
+  },
+  "fontSerifNote": {
+    "message": "Roomy letterforms, easy on the eyes over hours."
+  },
+  "fontSansNote": {
+    "message": "Sturdiest strokes — safest at small sizes or low quality."
+  },
+  "fontKaiNote": {
+    "message": "Handwritten feel with thin strokes; pair with a large size and a dark backdrop."
+  },
+  "densityCompactNote": {
+    "message": "Shortest box; long sentences get chopped a bit."
+  },
+  "densityStandardNote": {
+    "message": "Recommended. Whole sentences first, long ones split at commas."
+  },
+  "densityFullNote": {
+    "message": "Most coherent, but a line can reach four rows on screen."
+  },
+  "confirmDelete": {
+    "message": "Confirm delete?"
+  },
+  "confirmReset": {
+    "message": "Confirm restore?"
+  },
+  "confirmResetAll": {
+    "message": "Confirm restore (including endpoint)?"
+  },
+  "pfCopySuffix": {
+    "message": "copy"
+  },
+  "pfNewName": {
+    "message": "New profile"
+  },
+  "pfDefaultName": {
+    "message": "Default"
+  },
+  "toastCreated": {
+    "message": "Created “$1”"
+  },
+  "toastDeleted": {
+    "message": "Deleted “$1”"
+  },
+  "toastRenamed": {
+    "message": "Renamed"
+  },
+  "toastGranted": {
+    "message": "Access granted"
+  },
+  "toastSaved": {
+    "message": "Saved"
+  },
+  "toastResetKept": {
+    "message": "Defaults restored (model and endpoint kept)"
+  },
+  "toastResetAll": {
+    "message": "Everything restored to defaults"
+  },
+  "toastCacheCleared": {
+    "message": "Cleared the cache for $1 videos"
+  },
+  "toastCacheClearFailed": {
+    "message": "Clearing failed — please retry"
+  },
+  "toastStatsReset": {
+    "message": "Usage stats reset"
+  },
+  "cardLevel": {
+    "message": "Reasoning level"
+  },
+  "cardSent": {
+    "message": "Fields sent"
+  },
+  "cardNotSent": {
+    "message": "none sent"
+  },
+  "cardUsed": {
+    "message": "Reasoning actually used"
+  },
+  "cardPrefixCache": {
+    "message": "Prefix cache"
+  },
+  "cardUsage": {
+    "message": "This request"
+  },
+  "cardInOut": {
+    "message": "$1 in / $2 out"
+  },
+  "cardNotReported": {
+    "message": "not reported"
+  },
+  "cardOk": {
+    "message": "Connected · $1 ms"
+  },
+  "cardWaiting": {
+    "message": "Requesting"
+  },
+  "cardFailed": {
+    "message": "Failed"
+  },
+  "cardNoResponse": {
+    "message": "No response"
+  },
+  "cardNoPerm": {
+    "message": "Not authorised"
+  },
+  "cardNoPermBody": {
+    "message": "No permission to reach that API address; the test was cancelled."
+  },
+  "cardWarnBurning": {
+    "message": "Set to “off”, yet it burned $1 reasoning tokens. Try the first style and test again; if the provider rejects it, this model cannot turn reasoning off."
+  },
+  "cardWarnIdle": {
+    "message": "The level is “$1” but not a single reasoning token was spent — this model may not support reasoning, or it doesn't accept this style."
+  },
+  "statRequests": {
+    "message": "$1 requests total"
+  },
+  "statTokens": {
+    "message": "$1 in / $2 out tokens"
+  },
+  "statNone": {
+    "message": "No usage recorded yet"
+  },
+  "statBatches": {
+    "message": "$1 batches translated"
+  },
+  "statDirty": {
+    "message": "$1 misaligned ($2%)"
+  },
+  "statClean": {
+    "message": "no misalignment so far"
+  },
+  "statSplit": {
+    "message": "split $1 times"
+  },
+  "statRepaired": {
+    "message": "repaired $1 lines"
+  },
+  "statDropped": {
+    "message": "gave up on $1 lines"
+  },
+  "statNoPrefixReport": {
+    "message": "Prefix cache: the provider doesn't report it"
+  },
+  "statPrefixHit": {
+    "message": "Prefix cache hit $1 ($2% of input)"
+  },
+  "statCached": {
+    "message": "$1 videos cached"
+  },
+  "statOldest": {
+    "message": "oldest entry last used $1 days ago"
+  }
+}

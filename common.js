@@ -85,23 +85,71 @@ export const FONT_STACKS = {
   kai: '"Constantia", "Cambria", Georgia, "Kaiti SC", STKaiti, KaiTi, "Noto Serif SC", serif'
 };
 
+/* ------------------------------------------------------------------ *
+ * 界面语言
+ *
+ * 取文案一律走 t(key, 中文原文)：拿得到翻译就用翻译，拿不到就用代码里那句中文。
+ * 这样做的理由是它能一步一步搬 —— 每换一处都不会把界面变成半截空白，
+ * 而且 zh 用户永远看得到东西，哪怕语言包漏了一条。
+ * 英文包漏没漏由 test/i18n.test.js 盯着：代码里出现过的每一个 key 都必须在
+ * _locales/en/messages.json 里有一条，漏一条就红。
+ * ------------------------------------------------------------------ */
+export function t(key, fallback, subs) {
+  let s = '';
+  try { s = chrome.i18n.getMessage(key, subs) || ''; } catch (_) {}
+  if (s) return s;
+  s = fallback === undefined ? key : fallback;
+  // 兜底那句里的 $1 $2 得自己填 —— 不然漏一条语言包就会在界面上露出一个 $1
+  return subs ? fillSubs(s, subs) : s;
+}
+
+function fillSubs(s, subs) {
+  const arr = Array.isArray(subs) ? subs : [subs];
+  return String(s).replace(/\$(\d)/g, (m, i) => (arr[Number(i) - 1] === undefined ? m : arr[Number(i) - 1]));
+}
+
+/**
+ * 把页面上标了 data-i18n 的地方换成当前语言。
+ *   data-i18n="key"        换 textContent
+ *   data-i18n-title="key"  换 title
+ *   data-i18n-ph="key"     换 placeholder
+ * 一律拿元素上现有的中文当兜底，所以标漏了一处也只是那一处不翻译，不会变空白。
+ */
+export function applyI18n(root) {
+  const scope = root || document;
+  /* 没有译文就一个字都不动 —— 页面上原来写的中文（有些还带着 <code>、<em> 这类标记）
+   * 就是中文界面该有的样子，用 textContent 覆盖一遍只会把标记洗掉。 */
+  for (const el of scope.querySelectorAll('[data-i18n]')) {
+    const s = t(el.dataset.i18n, '');
+    if (s) el.textContent = s;
+  }
+  for (const el of scope.querySelectorAll('[data-i18n-title]')) {
+    const s = t(el.dataset.i18nTitle, '');
+    if (s) el.title = s;
+  }
+  for (const el of scope.querySelectorAll('[data-i18n-ph]')) {
+    const s = t(el.dataset.i18nPh, '');
+    if (s) el.placeholder = s;
+  }
+}
+
 export function uiLanguage() {
   try { return chrome.i18n.getUILanguage() || 'zh-CN'; } catch (_) { return 'zh-CN'; }
 }
 
 /** 把设置里的 targetLang 解析成给模型看的语言名。'auto' → 跟随浏览器。 */
 export function resolveTargetName(settings) {
-  const t = String((settings && settings.targetLang) || 'auto').trim();
-  if (t && t.toLowerCase() !== 'auto') return t;
+  const want = String((settings && settings.targetLang) || 'auto').trim();
+  if (want && want.toLowerCase() !== 'auto') return want;
   const ui = uiLanguage();
   return CODE_TO_NAME[ui] || CODE_TO_NAME[ui.split('-')[0]] || ui;
 }
 
 /** 目标语言的代码；用户填了无法识别的自定义名称时返回 ''（表示放弃同语言判断）。 */
 export function resolveTargetCode(settings) {
-  const t = String((settings && settings.targetLang) || 'auto').trim();
-  if (!t || t.toLowerCase() === 'auto') return uiLanguage();
-  return NAME_TO_CODE[t] || '';
+  const want = String((settings && settings.targetLang) || 'auto').trim();
+  if (!want || want.toLowerCase() === 'auto') return uiLanguage();
+  return NAME_TO_CODE[want] || '';
 }
 
 /** 只比主语言子标签：zh-CN 与 zh-Hans 视为同一种。 */

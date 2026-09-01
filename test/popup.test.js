@@ -51,6 +51,10 @@ const doc = {
   getElementById: $,
   createElement: () => makeEl('_new'),
   querySelector: () => null,
+  /* 界面文案是运行时按语言换的（applyI18n 会扫这些属性）。桩里没有真的 HTML，
+     换不换都不影响这些用例 —— 但得让它扫得动。中文兜底由 t() 负责，
+     所以断言里的中文照样成立。 */
+  querySelectorAll: () => [],
   addEventListener(t, f) { (docOn[t] = docOn[t] || []).push(f); }
 };
 
@@ -348,6 +352,39 @@ const itemText = (b) => b._kids.map((k) => k.textContent).join(' · ') || b.text
     check('带上了版本和配置', copied.includes('Sub Translator') && copied.includes('模型='),
           copied.slice(0, 120));
     check('接口只留主机名', !copied.includes('/v1'), copied.slice(0, 200));
+  }
+
+  /* ---------------------------------------------------------------- *
+   * [12] 英文界面：接上语言包之后真的换语言
+   * ---------------------------------------------------------------- */
+  console.log('\n[12] 英文界面');
+  {
+    /* 用真的 _locales/en/messages.json，不在测试里另抄一份 —— 抄一份就等于
+       在验「我抄得对不对」。 */
+    const en = JSON.parse(require('fs').readFileSync(__dirname + '/../_locales/en/messages.json', 'utf8'));
+    chrome.i18n.getMessage = (k, subs) => {
+      const m = en[k] && en[k].message;
+      if (!m) return '';
+      const arr = Array.isArray(subs) ? subs : (subs === undefined ? [] : [subs]);
+      return m.replace(/\$(\d)/g, (x, i) => (arr[Number(i) - 1] === undefined ? x : arr[Number(i) - 1]));
+    };
+
+    statusReply = { onYoutube: true, active: true, status: 'error', segments: 10, translated: 4,
+                    error: 'HTTP 401: nope', errorCode: 'auth' };
+    await freshPopup();
+    await sleep(10);
+    check('错误说的是英文', $('errText').textContent.includes('API key'), $('errText').textContent);
+    check('按钮也是英文', $('fixBtn').textContent === 'Open options', $('fixBtn').textContent);
+    check('进度也换了语言', $('statusText').textContent.includes('Translated 4/10'),
+          $('statusText').textContent);
+    check('推理提示也换了', $('reasonHint').textContent.includes('subtitles') ||
+          $('reasonHint').textContent.includes('thinking') || $('reasonHint').textContent.includes('faithful'),
+          $('reasonHint').textContent);
+    check('一个中文字都没剩下', !/[一-鿿]/.test($('errText').textContent + $('fixBtn').textContent +
+          $('statusText').textContent + $('reasonHint').textContent),
+          $('statusText').textContent);
+
+    chrome.i18n.getMessage = undefined;      // 还回去，后面的用例照旧看中文
   }
 
   console.log(`\n结果：${pass} 通过 / ${fail} 失败`);

@@ -1,0 +1,10 @@
+{
+  "extDescription": {
+    "message": "YouTube 双语字幕翻译，为长访谈与科技播客优化。",
+    "description": "商店与扩展列表里的一句话说明"
+  },
+  "cmdToggle": {
+    "message": "开关当前视频的翻译字幕",
+    "description": "快捷键说明"
+  }
+}

@@ -1,5 +1,5 @@
 import { DEFAULTS, getSettings, setSettings, CODE_TO_NAME as LANG_NAMES,
-         getProfiles, saveProfiles, pickProfile } from '../common.js';
+         getProfiles, saveProfiles, pickProfile, t, applyI18n } from '../common.js';
 
 const $ = (id) => document.getElementById(id);
 let S = Object.assign({}, DEFAULTS);
@@ -8,21 +8,21 @@ let tabUrl = '';
 let P = { active: '', list: [] };   // 存了哪几套接口配置
 
 const STATUS_TEXT = {
-  idle: '已关闭',
-  waiting: '正在获取字幕…',
-  ready: '字幕已就绪',
-  translating: '正在翻译…',
-  error: '出错了',
-  nosub: '这个视频没有可用的字幕轨'
+  idle: () => t('stIdle', '已关闭'),
+  waiting: () => t('stWaiting', '正在获取字幕…'),
+  ready: () => t('stReady', '字幕已就绪'),
+  translating: () => t('stTranslating', '正在翻译…'),
+  error: () => t('stError', '出错了'),
+  nosub: () => t('stNoSub', '这个视频没有可用的字幕轨')
 };
 
 /* 说不出原因的等待，比直说「这儿不支持」糟得多 —— 用户会一直以为是自己哪儿没弄对，
    然后反复刷新一个刷新多少次也不会好的页面。 */
 const UNSUPPORTED_TEXT = {
-  live: '正在直播的视频暂不支持',
-  upcoming: '首播还没开始',
-  shorts: 'Shorts 暂不支持',
-  'no-player': '这个页面上没有播放器'
+  live: () => t('unLive', '正在直播的视频暂不支持'),
+  upcoming: () => t('unUpcoming', '首播还没开始'),
+  shorts: () => t('unShorts', 'Shorts 暂不支持'),
+  'no-player': () => t('unNoPlayer', '这个页面上没有播放器')
 };
 
 /* 错误码 → 说人话的一句 + 唯一的那个下一步动作。
@@ -32,27 +32,34 @@ const UNSUPPORTED_TEXT = {
  * 唯一能定位的往往就是它），但摆在最前面的是「这是什么事」和「现在该干什么」。
  * fix 为空表示什么都不用做或者只能等。 */
 const ERROR_INFO = {
-  noKey:   { text: '还没填 API Key', fix: '去设置' },
-  noPerm:  { text: '还没授权访问这个 API 地址', fix: '去授权' },
-  auth:    { text: 'API Key 不对，或者这个 Key 没有权限', fix: '去设置' },
-  model:   { text: '接口拒收了这次请求，多半是模型名或推理参数写法不对', fix: '去设置' },
-  rate:    { text: '接口限流，稍后会自动重试', fix: '' },
-  server:  { text: '服务商那边出错了', fix: '' },
-  timeout: { text: '请求超时', fix: '' },
-  format:  { text: '模型没有按行给出译文', fix: '' },
-  network: { text: '连不上接口，检查一下网络和 API 地址', fix: '去设置' }
+  noKey:   { text: () => t('errNoKey', '还没填 API Key'), fix: 'toOptions' },
+  noPerm:  { text: () => t('errNoPerm', '还没授权访问这个 API 地址'), fix: 'toGrant' },
+  auth:    { text: () => t('errAuth', 'API Key 不对，或者这个 Key 没有权限'), fix: 'toOptions' },
+  model:   { text: () => t('errModel', '接口拒收了这次请求，多半是模型名或推理参数写法不对'), fix: 'toOptions' },
+  rate:    { text: () => t('errRate', '接口限流，稍后会自动重试'), fix: '' },
+  server:  { text: () => t('errServer', '服务商那边出错了'), fix: '' },
+  timeout: { text: () => t('errTimeout', '请求超时'), fix: '' },
+  format:  { text: () => t('errFormat', '模型没有按行给出译文'), fix: '' },
+  network: { text: () => t('errNetwork', '连不上接口，检查一下网络和 API 地址'), fix: 'toOptions' }
+};
+
+/* 下一步按钮上写什么 */
+const FIX_TEXT = {
+  toOptions: () => t('popupToOptions', '去设置'),
+  toGrant: () => t('popupToGrant', '去授权')
 };
 
 /* 重试对这几种没有意义：没填 Key、没授权、以及正在自动重试的限流。 */
 const NO_RETRY = ['noKey', 'noPerm', 'rate'];
 
 const HINTS = {
-  none: '字幕翻译一般「关闭」就够，最快最省。',
-  low: '略微思考，长句、双关和技术梗更稳。',
-  medium: '最贴切，但明显更慢更贵，只在难听懂的访谈里用。'
+  none: () => t('hintNone', '字幕翻译一般「关闭」就够，最快最省。'),
+  low: () => t('hintLow', '略微思考，长句、双关和技术梗更稳。'),
+  medium: () => t('hintMedium', '最贴切，但明显更慢更贵，只在难听懂的访谈里用。')
 };
 
 async function init() {
+  applyI18n();                 // 先把页面上写死的中文换成当前语言
   S = await getSettings();
   try { P = await getProfiles(); } catch (_) {}
   paintSettings();
@@ -63,13 +70,15 @@ async function init() {
   setInterval(refreshStatus, 1200);
 }
 
+const hint = (k) => (HINTS[k] ? HINTS[k]() : '');
+
 function paintSettings() {
   $('master').checked = !!S.enabled;
   $('autoStart').checked = !!S.autoStart;
   $('fontSize').value = S.fontSize;
   $('fontVal').textContent = S.fontSize;
   setSeg('reasoning', S.reasoning);
-  $('reasonHint').textContent = HINTS[S.reasoning] || '';
+  $('reasonHint').textContent = hint(S.reasoning);
   paintModel();
   paintSetup();
 }
@@ -87,13 +96,13 @@ function paintSetup() {
 function paintModel() {
   const el = $('modelTag');
   const model = String(S.model || '').trim();
-  el.textContent = model || '未设置模型';
+  el.textContent = model || t('noModel', '未设置模型');
   el.classList.toggle('none', !model);
 
   const cur = P.list.find((x) => x.id === P.active);
-  el.title = (cur && cur.name ? `配置「${cur.name}」　·　` : '') +
-             (model ? '模型 ' + model : '还没填模型，去设置页填一个') +
-             '　·　点击切换配置';
+  el.title = (cur && cur.name ? t('pfCurrent', '配置「$1」', [cur.name]) + '　·　' : '') +
+             (model ? t('pfModel', '模型 $1', [model]) : t('pfNoModel', '还没填模型，去设置页填一个')) +
+             '　·　' + t('pfClickToSwitch', '点击切换配置');
 }
 
 /* 每次打开都重画一遍：上一次点过之后当前档换了，标记得跟着挪。 */
@@ -112,7 +121,7 @@ function paintMenu() {
     n.textContent = p.name;
     const m = document.createElement('span');
     m.className = 'pfModel';
-    m.textContent = p.model || '未设置模型';
+    m.textContent = p.model || t('noModel', '未设置模型');
     b.append(n, m);
     box.appendChild(b);
   }
@@ -121,7 +130,7 @@ function paintMenu() {
   more.type = 'button';
   more.className = 'pfItem pfMore';
   more.setAttribute('role', 'menuitem');
-  more.textContent = '管理配置…';
+  more.textContent = t('pfManage', '管理配置…');
   box.appendChild(more);
 }
 
@@ -144,7 +153,7 @@ async function switchProfile(id) {
   await save(pickProfile(p));
   paintModel();
   paintSetup();          // 换到一档没填 Key 的，横幅得回来
-  toast(`已切换到「${p.name}」`);
+  toast(t('toastSwitched', '已切换到「$1」', [p.name]));
 }
 
 let toastTimer = null;
@@ -180,7 +189,7 @@ function bind() {
     const b = e.target.closest('button');
     if (!b) return;
     setSeg('reasoning', b.dataset.v);
-    $('reasonHint').textContent = HINTS[b.dataset.v] || '';
+    $('reasonHint').textContent = hint(b.dataset.v);
     save({ reasoning: b.dataset.v });
   });
 
@@ -201,10 +210,10 @@ function bind() {
     if (!tabId) return;
     const b = $('purgeBtn');
     b.disabled = true;
-    b.textContent = '正在重翻…';
+    b.textContent = t('popupPurging', '正在重翻…');
     try { await chrome.tabs.sendMessage(tabId, { type: 'purgeCache' }); } catch (_) {}
     b.disabled = false;
-    b.textContent = '译文和原文对不上？重翻本视频';
+    b.textContent = t('popupPurge', '译文和原文对不上？重翻本视频');
     refreshStatus();
   });
 
@@ -243,9 +252,9 @@ async function connectTab() {
 /* 没有 content script 的页面各有各的原因，说清楚是哪一种。
    一律写「当前不是 YouTube 页面」的话，人在 music.youtube.com 上会以为插件坏了。 */
 function offsiteText() {
-  if (/youtube-nocookie\.com\//.test(tabUrl)) return '嵌入播放器暂不支持，在 YouTube 上打开这个视频';
-  if (/^https:\/\/(m|music|studio)\.youtube\.com\//.test(tabUrl)) return '只支持 www.youtube.com 上的视频页';
-  return '当前不是 YouTube 页面';
+  if (/youtube-nocookie\.com\//.test(tabUrl)) return t('offEmbed', '嵌入播放器暂不支持，在 YouTube 上打开这个视频');
+  if (/^https:\/\/(m|music|studio)\.youtube\.com\//.test(tabUrl)) return t('offSubdomain', '只支持 www.youtube.com 上的视频页');
+  return t('offNotYoutube', '当前不是 YouTube 页面');
 }
 
 async function refreshStatus() {
@@ -257,18 +266,20 @@ async function refreshStatus() {
   let r = null;
   try { r = await chrome.tabs.sendMessage(tabId, { type: 'getStatus' }); } catch (_) {}
   if (!r) {
-    $('statusText').textContent = '页面未就绪，刷新一下试试';
+    $('statusText').textContent = t('stNotReady', '页面未就绪，刷新一下试试');
     return;
   }
 
   /* YouTube 改版了：我们摸的是它的内部实现，随时可能在某次发版里换掉。坏了要说得出
      坏在哪一件上 —— 用户报障时一句话就能定位，也不必再去猜是不是自己哪儿没弄对。 */
   if (r.playerChanged) {
-    $('statusText').textContent = 'YouTube 改版了，插件读不到播放器数据';
+    $('statusText').textContent = t('stPlayerChanged', 'YouTube 改版了，插件读不到播放器数据');
     $('dot').removeAttribute('data-s');
     $('videoTitle').textContent = r.title || '';
     const miss = (r.capsMissing || []).join('、');
-    $('srcText').textContent = miss ? '缺少：' + miss + '　·　等插件更新' : '等插件更新';
+    $('srcText').textContent = miss
+      ? t('srcMissing', '缺少：$1　·　等插件更新', [miss])
+      : t('srcWaitUpdate', '等插件更新');
     $('srcText').classList.remove('hidden');
     $('barFill').style.width = '0%';
     $('errText').classList.add('hidden');
@@ -280,7 +291,8 @@ async function refreshStatus() {
 
   /* 不支持的页面压过一切：直播翻不了，再显示「正在获取字幕…」就是在骗人 */
   if (r.unsupported) {
-    $('statusText').textContent = UNSUPPORTED_TEXT[r.unsupported] || '这个页面暂不支持';
+    const un = UNSUPPORTED_TEXT[r.unsupported];
+    $('statusText').textContent = un ? un() : t('unOther', '这个页面暂不支持');
     $('dot').removeAttribute('data-s');
     $('videoTitle').textContent = r.title || '';
     $('srcText').classList.add('hidden');
@@ -293,22 +305,26 @@ async function refreshStatus() {
   }
 
   const key = r.active ? r.status : (r.status === 'nosub' ? 'nosub' : 'idle');
-  let text = STATUS_TEXT[key] || '—';
+  let text = STATUS_TEXT[key] ? STATUS_TEXT[key]() : '—';
   if (r.active && r.segments) {
     // 用自带字幕时一个字都没翻，别写成「已翻译」
-    const verb = r.adopted ? '已配上' : (r.status === 'translating' ? '正在翻译' : '已翻译');
-    text = verb + ` ${r.translated}/${r.segments} 句`;
+    const n = [String(r.translated), String(r.segments)];
+    text = r.adopted ? t('progAdopted', '已配上 $1/$2 句', n)
+      : r.status === 'translating' ? t('progRunning', '正在翻译 $1/$2 句', n)
+      : t('progDone', '已翻译 $1/$2 句', n);
   } else if (!r.active && r.hasTracks && r.needsTranslation === false) {
-    text = r.audioDubbed ? '当前是配音音轨，无需翻译' : '原声已是目标语言，无需翻译';
+    text = r.audioDubbed
+      ? t('stDubbed', '当前是配音音轨，无需翻译')
+      : t('stSameLang', '原声已是目标语言，无需翻译');
   }
   /* 「没有英文字幕」这句以前是写死的，可源语言是自动识别的 —— 一个法语视频
      照样会看到「没有英文字幕」。把真正识别出来的那个语言写进去。 */
   if (key === 'nosub') {
     const lang = r.audioLang || r.sourceLang;
-    if (lang) text = `这个视频没有可用的字幕轨（音轨识别为${langName(lang)}）`;
+    if (lang) text = t('stNoSubLang', '这个视频没有可用的字幕轨（音轨识别为 $1）', [langName(lang)]);
   }
   if (r.sourceLang && !r.trackLang && key !== 'nosub') {
-    text += `　·　识别为 ${langName(r.sourceLang)}`;
+    text += '　·　' + t('stDetected', '识别为 $1', [langName(r.sourceLang)]);
   }
   $('statusText').textContent = text;
   $('dot').dataset.s = r.active ? r.status : '';
@@ -318,12 +334,12 @@ async function refreshStatus() {
 
   const hasErr = !!r.error;
   const info = ERROR_INFO[r.errorCode] || null;
-  $('errText').textContent = info ? info.text : (r.error || '');
+  $('errText').textContent = info ? info.text() : (r.error || '');
   $('errText').title = r.error || '';          // 服务商的原话留着，报障时就靠它
   $('errText').classList.toggle('hidden', !hasErr);
   $('retryBtn').classList.toggle('hidden', !(hasErr && NO_RETRY.indexOf(r.errorCode) === -1));
   const fix = (info && info.fix) || '';
-  $('fixBtn').textContent = fix;
+  $('fixBtn').textContent = fix ? FIX_TEXT[fix]() : '';
   $('fixBtn').classList.toggle('hidden', !(hasErr && fix));
   $('purgeBtn').classList.toggle('hidden', !(r.active && r.segments > 0));
 }
@@ -343,33 +359,37 @@ function paintSource(r) {
   /* 这两条比字幕轨列表更要紧，摆最前面：
      一条解释「为什么这次没花钱」，一条解释「为什么听起来怪」。 */
   if (r.adopted) {
-    parts.push(`译文用的是视频自带的${langName(r.adopted)}字幕，没花 token`);
+    parts.push(t('srcAdopted', '译文用的是视频自带的 $1 字幕，没花 token', [langName(r.adopted)]));
   }
   if (r.audioDubbed && r.audioLang) {
-    parts.push(`当前音轨是${langName(r.audioLang)}配音${r.active ? '' : ' · 换回原声音轨就会自动翻译'}`);
+    parts.push(t('srcDubbed', '当前音轨是 $1 配音', [langName(r.audioLang)]) +
+               (r.active ? '' : ' · ' + t('srcDubbedHint', '换回原声音轨就会自动翻译')));
   }
 
   if (r.trackLang) {
-    parts.push('字幕源：' + langName(r.trackLang) + (r.trackKind === 'asr' ? '（自动字幕）' : ''));
+    parts.push(t('srcTrack', '字幕源：$1', [langName(r.trackLang)]) +
+               (r.trackKind === 'asr' ? t('srcAsr', '（自动字幕）') : ''));
   }
 
   const tracks = r.trackList || [];
-  const list = tracks.map((t) => langName(t.lang));
+  const list = tracks.map((x) => langName(x.lang));
   const uniq = [...new Set(list)].filter(Boolean);
   if (uniq.length > 1) {
-    const shown = uniq.length > 4 ? uniq.slice(0, 4).join('、') + ` 等 ${uniq.length} 种` : uniq.join('、');
-    parts.push('本视频字幕轨：' + shown);
+    const shown = uniq.length > 4
+      ? t('srcMore', '$1 等 $2 种', [uniq.slice(0, 4).join('、'), String(uniq.length)])
+      : uniq.join('、');
+    parts.push(t('srcTracks', '本视频字幕轨：$1', [shown]));
   } else if (tracks.length === 1 && r.trackLang) {
-    parts.push('本视频只有这一条字幕轨');
+    parts.push(t('srcOnlyOne', '本视频只有这一条字幕轨'));
   }
 
   /* 音频是一种语言、却没有对应的字幕轨 —— 比如对白是游戏烧进画面的。
      这时插件只能拿现有的轨去翻，等于翻「译文的译文」。不点破的话，
      用户会以为是自己在字幕菜单里切换没生效。 */
   const audio = baseLang(r.audioLang);
-  const hasAudioTrack = tracks.some((t) => baseLang(t.lang) === audio);
+  const hasAudioTrack = tracks.some((x) => baseLang(x.lang) === audio);
   if (audio && tracks.length && !hasAudioTrack) {
-    parts.push(`没有${langName(r.audioLang)}字幕轨，只能拿现有的轨当原文`);
+    parts.push(t('srcNoAudioTrack', '没有 $1 字幕轨，只能拿现有的轨当原文', [langName(r.audioLang)]));
   }
 
   el.textContent = parts.join('　·　');
@@ -440,20 +460,20 @@ async function copyDiagnostics() {
   try { text = await collectDiagnostics(); } catch (e) { text = '收集诊断信息时出错：' + e; }
   try {
     await navigator.clipboard.writeText(text);
-    toast('诊断信息已复制（不含 Key）');
+    toast(t('diagCopied', '诊断信息已复制（不含 Key）'));
   } catch (_) {
     // 剪贴板被策略挡住时，至少让用户能从控制台里拿走
-    try { console.log(text); } catch (_) {}
-    toast('复制失败，已打印到控制台');
+    try { console.log(text); } catch (_e) {}
+    toast(t('diagCopyFailed', '复制失败，已打印到控制台'));
   }
 }
 
 async function refreshUsage() {
   const got = await chrome.storage.local.get('stats');
   const s = got.stats;
-  if (!s || !s.requests) { $('usage').textContent = '还没用过 token'; return; }
+  if (!s || !s.requests) { $('usage').textContent = t('usageNone', '还没用过 token'); return; }
   const total = s.prompt + s.completion;
-  $('usage').textContent = `累计 ${fmt(total)} tokens · ${s.requests} 次请求`;
+  $('usage').textContent = t('usageTotal', '累计 $1 tokens · $2 次请求', [fmt(total), String(s.requests)]);
 }
 
 function fmt(n) {

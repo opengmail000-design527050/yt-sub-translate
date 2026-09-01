@@ -2,7 +2,7 @@
  * 别被控制栏压住，以及播放器右下角那个「译」按钮。
  * 这个模块是唯一碰 DOM 的地方。
  */
-import { DEFAULTS, FONT_STACKS } from '../../common.js';
+import { DEFAULTS, FONT_STACKS, t } from '../../common.js';
 import { S, st, clamp, getVideo, getPlayerEl, patchSettings } from './state.js';
 import { schedule, SEEK_JUMP, SEEK_SETTLE } from './scheduler.js';
 import { toggle } from './tracks.js';
@@ -21,9 +21,9 @@ function ensureOverlay() {
   overlay.id = 'ytst-overlay';
   overlay.innerHTML =
     '<div class="ytst-box">' +
-    '<div class="ytst-grip" title="拖动移动字幕 · 双击复位"></div>' +
-    '<div class="ytst-edge ytst-edge-l" title="拖动调整字幕框宽度 · 双击复位"></div>' +
-    '<div class="ytst-edge ytst-edge-r" title="拖动调整字幕框宽度 · 双击复位"></div>' +
+    '<div class="ytst-grip" title="' + t('boxDragTip', '拖动移动字幕 · 双击复位') + '"></div>' +
+    '<div class="ytst-edge ytst-edge-l" title="' + t('boxWidthTip', '拖动调整字幕框宽度 · 双击复位') + '"></div>' +
+    '<div class="ytst-edge ytst-edge-r" title="' + t('boxWidthTip', '拖动调整字幕框宽度 · 双击复位') + '"></div>' +
     '<div class="ytst-orig"></div>' +
     '<div class="ytst-trans"></div>' +
     '</div>';
@@ -279,7 +279,7 @@ function applyLayout() {
   if (Math.abs(next - cur) > 1) overlay.style.setProperty('--ytst-lift', Math.round(next) + 'px');
 }
 
-export function findIndex(t) {
+export function findIndex(time) {
   const segs = st.segments;
   if (!segs.length) return -1;
   // 就近线性查找（播放通常是顺序的），失败再二分
@@ -290,19 +290,19 @@ export function findIndex(t) {
      * 首尾相接 —— 带着容差从前往后扫，播放头进入下一句之后的 0.35 秒里上一句仍然满足
      * 条件、还会先命中，于是顺序播放时每一次换句都固定晚半拍。 */
     for (let k = i; k < stop; k++) {
-      if (t >= segs[k].start && t < segs[k].end) return k;
+      if (time >= segs[k].start && time < segs[k].end) return k;
     }
     // 严格区间里没有：这才轮到容差，它本来就是给句子之间的空隙用的
     for (let k = i; k < stop; k++) {
-      if (t >= segs[k].start - 0.15 && t < segs[k].end + 0.35) return k;
+      if (time >= segs[k].start - 0.15 && time < segs[k].end + 0.35) return k;
     }
   }
   let lo = 0, hi = segs.length - 1, best = -1;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
-    if (segs[mid].start - 0.15 <= t) { best = mid; lo = mid + 1; } else hi = mid - 1;
+    if (segs[mid].start - 0.15 <= time) { best = mid; lo = mid + 1; } else hi = mid - 1;
   }
-  if (best >= 0 && t < segs[best].end + 0.35) return best;
+  if (best >= 0 && time < segs[best].end + 0.35) return best;
   return -1;
 }
 
@@ -358,7 +358,7 @@ export function render() {
     elTrans.classList.remove('ytst-pending');
     overlay.classList.add('ytst-no-trans');
   } else {
-    changed = setText(elTrans, st.error ? '· 翻译出错，点插件图标查看 ·' : '···') || changed;
+    changed = setText(elTrans, st.error ? t('boxError', '· 翻译出错，点插件图标查看 ·') : '···') || changed;
     elTrans.classList.add('ytst-pending');
     overlay.classList.remove('ytst-no-trans');
   }
@@ -384,8 +384,9 @@ export function ensureButton() {
 
   btn = document.createElement('button');
   btn.className = 'ytp-button ytst-btn';
-  btn.title = '双语字幕翻译 (Alt+Shift+T)';
-  btn.innerHTML = '<span class="ytst-btn-label">译</span><span class="ytst-dot"></span>';
+  btn.title = t('btnTitle', '双语字幕翻译 (Alt+Shift+T)');
+  // 按钮上那个字也跟着语言走：英文界面下一个「译」字反而认不出来
+  btn.innerHTML = '<span class="ytst-btn-label">' + t('btnLabel', '译') + '</span><span class="ytst-dot"></span>';
   btn.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
   const settings = right.querySelector('.ytp-settings-button');
   if (settings) right.insertBefore(btn, settings); else right.insertBefore(btn, right.firstChild);

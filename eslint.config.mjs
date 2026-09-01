@@ -35,7 +35,10 @@ export default [
         CustomEvent: 'readonly', MutationObserver: 'readonly', self: 'readonly'
       }
     },
-    rules: shared
+    /* 扩展本体多一条 no-shadow：一个叫 t 的计时器变量曾经把取文案的 t() 遮成了
+       一个数字，而它藏在只有超时才走到的分支里 —— 测试跑不到，浏览器里才炸。
+       测试文件不开这条：那边一堆 (l) => ... 的一次性回调，收益抵不上噪音。 */
+    rules: Object.assign({}, shared, { 'no-shadow': 'error' })
   },
   {
     /* inject.js 直接以普通脚本注入页面，不打包也不是模块。

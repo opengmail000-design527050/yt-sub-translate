@@ -2,66 +2,63 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <title>Sub Translator · 设置</title>
+  <title data-i18n="optTitle">Sub Translator · 设置</title>
   <link rel="stylesheet" href="options.css">
 </head>
 <body>
 <main>
   <header class="page-head">
     <div class="brand"><img class="mark" src="../icons/icon48.png" alt=""><h1>Sub Translator</h1></div>
-    <p class="sub">自动识别原声语言，把 YouTube 的字幕译成你一眼看懂的那一种，默认双语对照。</p>
+    <p data-i18n="optSub" class="sub">自动识别原声语言，把 YouTube 的字幕译成你一眼看懂的那一种，默认双语对照。</p>
   </header>
 
   <section class="card">
-    <h2>模型与接口</h2>
+    <h2 data-i18n="optApi">模型与接口</h2>
 
     <div class="field">
-      <label for="profileSel">配置</label>
+      <label data-i18n="optProfile" for="profileSel">配置</label>
       <div class="profileBar">
         <select id="profileSel"></select>
-        <input id="profileName" type="text" class="hidden" spellcheck="false" maxlength="40"
+        <input data-i18n-ph="optProfileNamePh" id="profileName" type="text" class="hidden" spellcheck="false" maxlength="40"
                placeholder="给这套配置起个名字">
-        <button class="mini" id="pfRename" type="button">重命名</button>
-        <button class="mini" id="pfNew" type="button">新建</button>
-        <button class="mini" id="pfCopy" type="button">复制</button>
-        <button class="mini danger" id="pfDel" type="button">删除</button>
+        <button data-i18n="optRename" class="mini" id="pfRename" type="button">重命名</button>
+        <button data-i18n="optNew" class="mini" id="pfNew" type="button">新建</button>
+        <button data-i18n="optCopy" class="mini" id="pfCopy" type="button">复制</button>
+        <button data-i18n="optDelete" class="mini danger" id="pfDel" type="button">删除</button>
       </div>
-      <p class="note">本卡片的五项属于当前配置，其余设置全局共享。切换配置会重翻已有字幕。</p>
+      <p data-i18n="optProfileNote" class="note">本卡片的五项属于当前配置，其余设置全局共享。切换配置会重翻已有字幕。</p>
     </div>
 
     <div class="field">
-      <label for="baseUrl">API 地址</label>
+      <label data-i18n="optBaseUrl" for="baseUrl">API 地址</label>
       <input id="baseUrl" type="text" spellcheck="false" placeholder="https://api.openai.com/v1">
-      <p class="note">OpenAI 兼容接口，填到 <code>/v1</code> 即可。已是完整路径就在结尾加 <code>#</code>。</p>
-      <p class="note warn hidden" id="permNote"><span id="permText"></span> <button class="mini" id="permBtn" type="button">授权访问</button></p>
+      <p class="note" data-i18n="optBaseUrlNote">OpenAI 兼容接口，填到 <code>/v1</code> 即可。已是完整路径就在结尾加 <code>#</code>。</p>
+      <p class="note warn hidden" id="permNote"><span id="permText"></span> <button data-i18n="optGrant" class="mini" id="permBtn" type="button">授权访问</button></p>
     </div>
 
     <div class="field">
-      <label for="apiKey">API Key</label>
+      <label data-i18n="optApiKey" for="apiKey">API Key</label>
       <div class="inline">
         <input id="apiKey" type="password" spellcheck="false" placeholder="sk-...">
-        <button class="mini" id="toggleKey" type="button">显示</button>
+        <button data-i18n="optShow" class="mini" id="toggleKey" type="button">显示</button>
       </div>
-      <p class="note">只存在本机浏览器里，不同步、不外发。</p>
+      <p data-i18n="optKeyNote" class="note">只存在本机浏览器里，不同步、不外发。</p>
     </div>
 
     <div class="grid2">
       <div class="field">
-        <label for="model">模型</label>
-        <input id="model" type="text" spellcheck="false" list="modelList" placeholder="gpt-5.1">
+        <label data-i18n="optModel" for="model">模型</label>
+        <input id="model" type="text" spellcheck="false" list="modelList" placeholder="gpt-5.6-luna">
+        <!-- 只是两个顺手可选的候选。输入框永远是自由填写的：模型名换得比这份列表快，
+             写死一堆过时的名字只会误导人。 -->
         <datalist id="modelList">
           <option value="gpt-5.6-luna"></option>
-          <option value="gpt-5.1"></option>
-          <option value="gpt-5.1-mini"></option>
-          <option value="claude-haiku-4-5-20251001"></option>
-          <option value="deepseek-chat"></option>
-          <option value="qwen-plus"></option>
-          <option value="gemini-2.5-flash"></option>
+          <option value="deepseek-v4-flash"></option>
         </datalist>
-        <p class="note">换模型只改这里，别的设置不用动。</p>
+        <p data-i18n="optModelNote" class="note">换模型只改这里，别的设置不用动。</p>
       </div>
       <div class="field">
-        <label for="targetLang">译文语言</label>
+        <label data-i18n="optTargetLang" for="targetLang">译文语言</label>
         <input id="targetLang" type="text" list="langList" placeholder="auto">
         <datalist id="langList">
           <option value="auto"></option>
@@ -75,66 +72,66 @@
     </div>
 
     <div class="field">
-      <label for="reasoningStyle">推理参数写法</label>
+      <label data-i18n="optReasoningStyle" for="reasoningStyle">推理参数写法</label>
       <select id="reasoningStyle">
-        <option value="effort_none">reasoning_effort 含 "none"（GPT-5 系列，推荐）</option>
-        <option value="effort">reasoning_effort，关闭时不发该字段 · 保守兼容</option>
-        <option value="enable_thinking">enable_thinking（通义 / DeepSeek 风格）</option>
-        <option value="off">从不发送推理参数</option>
+        <option data-i18n="optStyleEffortNone" value="effort_none">reasoning_effort 含 "none"（GPT-5 系列，推荐）</option>
+        <option data-i18n="optStyleEffort" value="effort">reasoning_effort，关闭时不发该字段 · 保守兼容</option>
+        <option data-i18n="optStyleThinking" value="enable_thinking">enable_thinking（通义 / DeepSeek 风格）</option>
+        <option data-i18n="optStyleOff" value="off">从不发送推理参数</option>
       </select>
-      <p class="note">只决定用哪个字段名发给服务商，强度在弹窗里选。<strong>只有第一项能真正关掉推理</strong>，服务商报 400 时才换其他项。</p>
+      <p class="note" data-i18n="optStyleNote">只决定用哪个字段名发给服务商，强度在弹窗里选。<strong>只有第一项能真正关掉推理</strong>，服务商报 400 时才换其他项。</p>
     </div>
 
     <div class="actions">
-      <button class="primary" id="testBtn" type="button">测试连接</button>
+      <button data-i18n="optTest" class="primary" id="testBtn" type="button">测试连接</button>
     </div>
     <div class="mcard hidden" id="testCard"></div>
   </section>
 
   <section class="card">
-    <h2>省 token</h2>
-    <p class="lead">分批、预翻译范围、并发、上下文、缓存都已按长播客调好，不再单独开放。这里只管缓存留多久。</p>
+    <h2 data-i18n="optSaveToken">省 token</h2>
+    <p data-i18n="optSaveTokenLead" class="lead">分批、预翻译范围、并发、上下文、缓存都已按长播客调好，不再单独开放。这里只管缓存留多久。</p>
 
     <div class="grid2">
       <div class="field">
-        <label for="cacheDays">缓存保留 <span class="v" id="cacheDaysV"></span></label>
+        <label for="cacheDays"><span data-i18n="optCacheDays">缓存保留</span> <span class="v" id="cacheDaysV"></span></label>
         <input id="cacheDays" type="range" min="7" max="365" step="1">
-        <p class="note">这么久没再看过才清理，重看会重新计时。</p>
+        <p data-i18n="optCacheDaysNote" class="note">这么久没再看过才清理，重看会重新计时。</p>
       </div>
       <div class="field">
-        <label for="cacheMax">最多缓存视频数 <span class="v" id="cacheMaxV"></span></label>
+        <label for="cacheMax"><span data-i18n="optCacheMax">最多缓存视频数</span> <span class="v" id="cacheMaxV"></span></label>
         <input id="cacheMax" type="range" min="20" max="1000" step="10">
-        <p class="note">超出时先淘汰最久没看的。</p>
+        <p data-i18n="optCacheMaxNote" class="note">超出时先淘汰最久没看的。</p>
       </div>
     </div>
   </section>
 
   <section class="card">
-    <h2>字幕外观</h2>
+    <h2 data-i18n="optLook">字幕外观</h2>
 
     <div class="grid2">
       <div class="field">
-        <label for="layout">显示方式</label>
+        <label data-i18n="optLayout" for="layout">显示方式</label>
         <select id="layout">
-          <option value="both">双语（原文 + 译文）</option>
-          <option value="transOnly">仅译文</option>
+          <option data-i18n="optLayoutBoth" value="both">双语（原文 + 译文）</option>
+          <option data-i18n="optLayoutTransOnly" value="transOnly">仅译文</option>
         </select>
       </div>
       <div class="field">
-        <label for="density">字幕长度</label>
+        <label data-i18n="optDensity" for="density">字幕长度</label>
         <select id="density">
-          <option value="compact">紧凑 · 尽量一行放下（约 96 字符）</option>
-          <option value="standard">标准 · 兼顾完整与高度（约 130 字符）</option>
-          <option value="full">完整 · 长句不拆（约 180 字符）</option>
+          <option data-i18n="optDensityCompact" value="compact">紧凑 · 尽量一行放下（约 96 字符）</option>
+          <option data-i18n="optDensityStandard" value="standard">标准 · 兼顾完整与高度（约 130 字符）</option>
+          <option data-i18n="optDensityFull" value="full">完整 · 长句不拆（约 180 字符）</option>
         </select>
         <p class="note" id="densityNote"></p>
       </div>
       <div class="field">
-        <label for="fontFamily">字体</label>
+        <label data-i18n="optFont" for="fontFamily">字体</label>
         <select id="fontFamily">
-          <option value="serif">雅致衬线 · Georgia + 思源宋体</option>
-          <option value="sans">现代无衬线 · Inter + 思源黑体</option>
-          <option value="kai">书卷楷体 · Constantia + 楷体</option>
+          <option data-i18n="optFontSerif" value="serif">雅致衬线 · Georgia + 思源宋体</option>
+          <option data-i18n="optFontSans" value="sans">现代无衬线 · Inter + 思源黑体</option>
+          <option data-i18n="optFontKai" value="kai">书卷楷体 · Constantia + 楷体</option>
         </select>
         <p class="note" id="fontNote"></p>
       </div>
@@ -149,52 +146,52 @@
 
     <div class="grid2">
       <div class="field">
-        <label for="origScale">原文相对字号 <span class="v" id="origScaleV"></span></label>
+        <label for="origScale"><span data-i18n="optOrigScale">原文相对字号</span> <span class="v" id="origScaleV"></span></label>
         <input id="origScale" type="range" min="0.5" max="1" step="0.02">
-        <p class="note">原文与译文同色，只靠字号分主次。</p>
+        <p data-i18n="optOrigScaleNote" class="note">原文与译文同色，只靠字号分主次。</p>
       </div>
       <div class="field">
-        <label for="bgOpacity">底色深度 <span class="v" id="bgOpacityV"></span></label>
+        <label for="bgOpacity"><span data-i18n="optBgOpacity">底色深度</span> <span class="v" id="bgOpacityV"></span></label>
         <input id="bgOpacity" type="range" min="0" max="0.9" step="0.05">
-        <p class="note">最左端为全透明，只剩描边文字。画面亮的视频建议留一点。</p>
+        <p data-i18n="optBgNote" class="note">最左端为全透明，只剩描边文字。画面亮的视频建议留一点。</p>
       </div>
       <div class="field">
-        <label for="maxWidth">字幕框最大宽度 <span class="v" id="maxWidthV"></span></label>
+        <label for="maxWidth"><span data-i18n="optMaxWidth">字幕框最大宽度</span> <span class="v" id="maxWidthV"></span></label>
         <input id="maxWidth" type="range" min="20" max="96" step="1">
-        <p class="note">框宽自适应，这里设上限；越宽长句折行越少。</p>
+        <p data-i18n="optWidthNote" class="note">框宽自适应，这里设上限；越宽长句折行越少。</p>
       </div>
     </div>
 
-    <label class="check"><input type="checkbox" id="autoScale"><span>字号随画面大小放大<em>（全屏时按比例放大，不缩小）</em></span></label>
-    <label class="check"><input type="checkbox" id="hideNative"><span>隐藏 YouTube 自带字幕<em>（避免重影）</em></span></label>
+    <label class="check"><input type="checkbox" id="autoScale"><span><span data-i18n="optAutoScale">字号随画面大小放大</span><em data-i18n="optAutoScaleNote">（全屏时按比例放大，不缩小）</em></span></label>
+    <label class="check"><input type="checkbox" id="hideNative"><span><span data-i18n="optHideNative">隐藏 YouTube 自带字幕</span><em data-i18n="optHideNativeNote">（避免重影）</em></span></label>
 
     <div class="actions">
-      <button class="ghost" id="resetPos" type="button">把字幕框放回底部居中</button>
+      <button data-i18n="optResetPos" class="ghost" id="resetPos" type="button">把字幕框放回底部居中</button>
       <span class="testOut" id="posOut"></span>
     </div>
-    <p class="note">视频里把鼠标移到字幕框上：圆点拖位置，竖线拖宽度，双击复位。</p>
+    <p data-i18n="optDragNote" class="note">视频里把鼠标移到字幕框上：圆点拖位置，竖线拖宽度，双击复位。</p>
   </section>
 
   <section class="card">
-    <h2>数据</h2>
+    <h2 data-i18n="optData">数据</h2>
     <div class="statLine" id="statLine">—</div>
     <div class="actions">
-      <button class="ghost" id="clearCache" type="button">清空翻译缓存</button>
-      <button class="ghost" id="resetStats" type="button">重置用量统计</button>
+      <button data-i18n="optClearCache" class="ghost" id="clearCache" type="button">清空翻译缓存</button>
+      <button data-i18n="optResetStats" class="ghost" id="resetStats" type="button">重置用量统计</button>
     </div>
   </section>
 
   <section class="card">
-    <h2>恢复默认</h2>
-    <p class="lead">把所有设置改回出厂值，不动缓存和用量统计。</p>
-    <label class="check"><input type="checkbox" id="keepApi" checked><span>保留模型与接口<em>（配置档、地址、Key、模型、译文语言、推理写法）</em></span></label>
+    <h2 data-i18n="optReset">恢复默认</h2>
+    <p data-i18n="optResetLead" class="lead">把所有设置改回出厂值，不动缓存和用量统计。</p>
+    <label class="check"><input type="checkbox" id="keepApi" checked><span><span data-i18n="optKeepApi">保留模型与接口</span><em data-i18n="optKeepApiNote">（配置档、地址、Key、模型、译文语言、推理写法）</em></span></label>
     <div class="actions">
-      <button class="ghost danger" id="resetAll" type="button">恢复默认设置</button>
-      <span class="testOut" id="resetOut">点两下确认，不可撤销。</span>
+      <button data-i18n="optResetAll" class="ghost danger" id="resetAll" type="button">恢复默认设置</button>
+      <span data-i18n="optResetHint" class="testOut" id="resetOut">点两下确认，不可撤销。</span>
     </div>
   </section>
 
-  <footer class="page-foot">改动即时生效 · v0.1.0</footer>
+  <footer class="page-foot" id="pageFoot"></footer>
 </main>
 
 <div class="toast" id="toast"></div>

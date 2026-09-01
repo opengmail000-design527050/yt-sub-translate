@@ -44,7 +44,10 @@ const $ = (id) => (els[id] = els[id] || makeEl(id));
 const doc = {
   getElementById: $,
   createElement: () => makeEl('_new'),
-  querySelector: () => null
+  querySelector: () => null,
+  /* 界面文案现在是运行时按语言换的（applyI18n 扫这几个属性）。桩里没有真的 HTML，
+     扫不到东西也没关系 —— 中文兜底由 t() 负责，断言里的中文照样成立。 */
+  querySelectorAll: () => []
 };
 
 const storage = {};
