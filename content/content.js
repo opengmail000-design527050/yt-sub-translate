@@ -589,7 +589,12 @@
       S.model || '',
       targetCode() || S.targetLang || '',
       base.endsWith('/') ? base.slice(0, -1) : base,
-      S.reasoning || '',
+      /* 推理档位曾经占这一格。它不再参与缓存归属 —— 同一句话开不开推理译出来的是
+       * 同一种译文，没道理分开存两份；分开存的直接后果是「难懂的段落临时开中档」
+       * 这个 README 明写的用法，会把整片已经买过的译文全部作废重买。
+       * 但这一格不能删：删了所有已存的缓存键都会变，用户为一件跟他无关的事
+       * 重新付一次钱。所以钉死在老的默认值上，老缓存照常命中。 */
+      'none',
       S.reasoningStyle || '',
       String(S.temperature === null || S.temperature === undefined ? '' : S.temperature),
       String(S.maxTokens === null || S.maxTokens === undefined ? '' : S.maxTokens),
@@ -1815,9 +1820,15 @@
     } catch (_) {}
   }
 
-  /* 改了会改变译文内容的设置：已有译文和在途请求都不能留 */
+  /* 改了会改变译文内容的设置：已有译文和在途请求都不能留。
+   *
+   * 推理档位（reasoning）不在里面，而且是有意不在的。它确实会让后面的译文更贴切，
+   * 可这不等于前面已经翻好的就作废了 —— 那些句子的译文本身没有任何问题。
+   * README 推荐的用法正是「难懂的段落临时开中档」，一进来就把整片译文清空重买，
+   * 等于给这个用法明码标价。档位只影响之后发出去的批次：background 每次请求都现读
+   * settings，所以下一批自然就带上新档位了，这里什么都不用做。 */
   const OUTPUT_KEYS = ['model', 'targetLang', 'baseUrl', 'extraPrompt',
-                       'reasoning', 'reasoningStyle', 'temperature', 'maxTokens', 'useContext'];
+                       'reasoningStyle', 'temperature', 'maxTokens', 'useContext'];
   /* 只影响怎么分批，译文本身不变，保留已翻好的部分 */
   const BATCH_KEYS = ['batchChars', 'batchLines'];
 

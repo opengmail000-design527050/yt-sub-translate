@@ -551,6 +551,68 @@ const check = (name, cond, extra) => {
           JSON.stringify(posted.map((p) => p.type)));
   }
 
+  console.log('\n[21] 播放中切推理档位');
+  {
+    /* README 推荐的用法是「难懂的段落临时开中档」。可 reasoning 以前既在 OUTPUT_KEYS 里
+       又在缓存键里，切一下的实际后果是：整片译文清空 + 换一把缓存键，已经买过的全部
+       重新买一遍 —— 正好是那个推荐用法在触发它。
+       档位对后续批次的生效不在这里验：background 每次请求都现读 settings，
+       到底发哪几个推理字段由 reasoning.test.js 盯着。 */
+    const asked = [];
+    runtimeReply = async (m) => {
+      if (m.type === 'cacheIndex') return { ok: true, removed: 0 };
+      m.payload.lines.forEach((l) => asked.push(l.text));
+      return { ok: true, map: Object.fromEntries(m.payload.lines.map((l) => [l.id, '译:' + l.id])), dropped: [] };
+    };
+    await chrome.storage.local.set({
+      settings: { targetLang: '简体中文', apiKey: 'x', concurrency: 1, useCache: true, extraPrompt: 'tier' }
+    });
+    await sleep(30);
+    toPage('player', { videoId: 'RSN', title: 'rsn', audioLang: 'en', tracks: [{ languageCode: 'en', kind: 'asr' }] });
+    await sleep(30);
+    toPage('track', { videoId: 'RSN', body: track(12, 'Reason') });
+    await sleep(260);
+    const b4 = await ask();
+    check('先翻好一部分', b4.translated > 0, JSON.stringify(b4));
+
+    asked.length = 0;
+    const keysBeforeTier = cacheKeys().length;
+    await chrome.storage.local.set({ settings: Object.assign({}, storage.settings, { reasoning: 'medium' }) });
+    await sleep(180);
+    const aft = await ask();
+    check('切档不清空已经翻好的译文', aft.translated === b4.translated,
+          b4.translated + ' -> ' + aft.translated);
+    check('切档不重新买一遍', asked.length === 0, '又送了 ' + asked.length + ' 行');
+    check('缓存键没换一把', cacheKeys().length === keysBeforeTier,
+          keysBeforeTier + ' -> ' + cacheKeys().length);
+
+    /* 关掉缓存再来一遍。开着缓存时就算真的作废了，译文也会立刻从缓存里回填，
+       看不出差别 —— 这一段才真正验的是「档位不在 OUTPUT_KEYS 里」。 */
+    await chrome.storage.local.set({
+      settings: { targetLang: '简体中文', apiKey: 'x', concurrency: 1, useCache: false, extraPrompt: 'tier2' }
+    });
+    await sleep(30);
+    toPage('player', { videoId: 'RSN2', title: 'rsn2', audioLang: 'en', tracks: [{ languageCode: 'en', kind: 'asr' }] });
+    await sleep(30);
+    toPage('track', { videoId: 'RSN2', body: track(12, 'Reason') });
+    await sleep(260);
+    const n1 = await ask();
+    check('无缓存时也先翻好', n1.translated > 0, JSON.stringify(n1));
+    asked.length = 0;
+    await chrome.storage.local.set({ settings: Object.assign({}, storage.settings, { reasoning: 'low' }) });
+    await sleep(200);
+    const n2 = await ask();
+    check('无缓存兜底时切档也不作废译文', n2.translated === n1.translated,
+          n1.translated + ' -> ' + n2.translated);
+    check('无缓存兜底时切档也不重发请求', asked.length === 0, '又送了 ' + asked.length + ' 行');
+
+    /* 换模型仍然必须作废 —— 那才真的是另一套译文 */
+    asked.length = 0;
+    await chrome.storage.local.set({ settings: Object.assign({}, storage.settings, { model: 'other-model' }) });
+    await sleep(180);
+    check('换模型照旧作废重翻', asked.length > 0, '送出 ' + asked.length + ' 行');
+  }
+
   console.log('\n结果：' + pass + ' 通过 / ' + fail + ' 失败');
   process.exit(fail ? 1 : 0);
 })();
