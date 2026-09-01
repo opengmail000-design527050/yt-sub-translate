@@ -167,6 +167,11 @@ function boot(opts) {
 
   const ctx = vm.createContext(win);
   vm.runInContext(fs.readFileSync(__dirname + '/../content/content.js', 'utf8'), ctx, { filename: 'content.js' });
+  /* content.js 注入时会把一个随机 token 挂在它创建的那个 script 标签上，注入脚本靠
+     document.currentScript 读回来 —— 两边的消息都带着它，防的是页面脚本伪造字幕。
+     这里照着浏览器的样子把 currentScript 摆好，不然 inject.js 拿不到 token，
+     它发出去的每一条消息都会被 content.js 正确地丢掉。 */
+  doc.currentScript = (doc.head.children || []).find((c) => c && c.dataset && c.dataset.ytstToken) || null;
   vm.runInContext(fs.readFileSync(__dirname + '/../content/inject.js', 'utf8'), ctx, { filename: 'inject.js' });
   const vmWindow = vm.runInContext('window', ctx);
 

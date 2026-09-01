@@ -98,8 +98,16 @@ vm.runInContext(fs.readFileSync(__dirname + '/../content/content.js', 'utf8'), c
 const vmWindow = vm.runInContext('window', ctx);
 const T = vm.runInContext('window.__YTST_TEST__', ctx);
 
-const toPage = (type, data) => {
-  (listeners.window.message || []).forEach((f) => f({ source: vmWindow, data: { ns: 'ytst', dir: 'p2c', type, data } }));
+/* 注入时内容脚本会现生成一个随机 token 挂在 script 标签上，之后只认带这个 token
+   的消息（防页面脚本伪造字幕）。桩得把它找出来一起带上。 */
+const pageToken = () => {
+  const el = (doc.head.children || []).find((c) => c && c.dataset && c.dataset.ytstToken);
+  return el ? el.dataset.ytstToken : '';
+};
+const toPage = (type, data, token) => {
+  const t = token === undefined ? pageToken() : token;
+  (listeners.window.message || []).forEach((f) =>
+    f({ source: vmWindow, data: { ns: 'ytst', dir: 'p2c', type, data, token: t } }));
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ask = () => new Promise((res) => chrome.runtime.onMessage._l.forEach((f) => f({ type: 'getStatus' }, {}, res)));

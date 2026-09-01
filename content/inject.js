@@ -11,8 +11,22 @@
   window.__YTST_INJECTED__ = true;
 
   const NS = 'ytst';
+
+  /* 内容脚本注入我们的时候现生成的随机口令。页面上任何别的脚本都拿不到它
+   * （dataset 挂在那个 script 标签上，标签 onload 就删了），所以两边的消息带上它
+   * 就能互相认出自己人 —— 防的是页面脚本伪造一条 track 把假字幕塞进来。
+   * dataset 读不到就退到地址后面的 #token。 */
+  const TOKEN = (() => {
+    const el = document.currentScript;
+    try {
+      if (el && el.dataset && el.dataset.ytstToken) return el.dataset.ytstToken;
+      if (el && el.src) return String(el.src).split('#')[1] || '';
+    } catch (_) {}
+    return '';
+  })();
+
   const post = (type, data) => {
-    try { window.postMessage({ ns: NS, dir: 'p2c', type, data }, '*'); } catch (_) {}
+    try { window.postMessage({ ns: NS, dir: 'p2c', type, data, token: TOKEN }, '*'); } catch (_) {}
   };
 
   /* ---------- 1. 网络劫持 ---------- */
@@ -319,6 +333,7 @@
     if (e.source !== window) return;
     const m = e.data;
     if (!m || m.ns !== NS || m.dir !== 'c2p') return;
+    if (m.token !== TOKEN) return;      // 不是注入我们的那个内容脚本发的
     if (m.type === 'probe') report();
     else if (m.type === 'fetchTrack') fetchTrack(m.data || {});
     else if (m.type === 'enableNative') enableNative((m.data && m.data.lang) || 'en');

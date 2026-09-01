@@ -112,8 +112,16 @@ vm.runInContext(fs.readFileSync(__dirname + '/../content/content.js', 'utf8'), c
    content.js 用 e.source !== window 做校验，所以事件里必须带 vm 侧的那个。 */
 const vmWindow = vm.runInContext('window', ctx);
 
-const toPage = (type, data) => {
-  (listeners.window.message || []).forEach((f) => f({ source: vmWindow, data: { ns: 'ytst', dir: 'p2c', type, data } }));
+/* 注入时内容脚本会现生成一个随机 token 挂在 script 标签上，之后只认带这个 token
+   的消息（防页面脚本伪造字幕）。桩得把它找出来一起带上。 */
+const pageToken = () => {
+  const el = (doc.head.children || []).find((c) => c && c.dataset && c.dataset.ytstToken);
+  return el ? el.dataset.ytstToken : '';
+};
+const toPage = (type, data, token) => {
+  const t = token === undefined ? pageToken() : token;
+  (listeners.window.message || []).forEach((f) =>
+    f({ source: vmWindow, data: { ns: 'ytst', dir: 'p2c', type, data, token: t } }));
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ask = () => new Promise((res) => chrome.runtime.onMessage._l.forEach((f) => f({ type: 'getStatus' }, {}, res)));
@@ -786,6 +794,55 @@ const check = (name, cond, extra) => {
     check('该要的字幕轨也去要了', posted.some((p) => p.type === 'fetchTrack'),
           JSON.stringify(posted.map((p) => p.type)));
   }
+
+  console.log('\n[28] 伪造的页面消息一律不收');
+  {
+    /* 页面里任何脚本都能 postMessage 一条 {ns:'ytst'} 出来。伪造一条 track 就能把
+       假的「原文」摆到用户屏幕上，还会连着写进缓存、拿去花钱翻。 */
+    runtimeReply = async (m) => (m.type === 'cacheIndex' ? { ok: true }
+      : { ok: true, map: Object.fromEntries(m.payload.lines.map((l) => [l.id, '译:' + l.id])), dropped: [] });
+    await chrome.storage.local.set({
+      settings: { targetLang: '简体中文', apiKey: 'x', concurrency: 1, useCache: false, extraPrompt: 'token' }
+    });
+    await sleep(30);
+    check('注入时确实交出去一个 token', pageToken().length >= 8, JSON.stringify(pageToken()));
+
+    // 不带 token 的：连视频都不该认
+    toPage('player', { videoId: 'FAKE', title: 'fake', audioLang: 'en',
+                       tracks: [{ languageCode: 'en', kind: 'asr' }] }, '');
+    await sleep(40);
+    check('不带 token 的播放器信息不收', (await ask()).videoId !== 'FAKE', JSON.stringify(await ask()));
+
+    // token 不对的同样不收
+    toPage('player', { videoId: 'FAKE2', title: 'fake2', audioLang: 'en',
+                       tracks: [{ languageCode: 'en', kind: 'asr' }] }, 'deadbeef');
+    await sleep(40);
+    check('token 不对的也不收', (await ask()).videoId !== 'FAKE2');
+
+    // 带对了就照常
+    toPage('player', { videoId: 'REAL', title: 'real', audioLang: 'en',
+                       tracks: [{ languageCode: 'en', kind: 'asr' }] });
+    await sleep(40);
+    check('自己人照常收', (await ask()).videoId === 'REAL', JSON.stringify(await ask()));
+
+    // 伪造的字幕体：不该被拿去翻，更不该显示
+    const seenFake = [];
+    runtimeReply = async (m) => {
+      if (m.type === 'cacheIndex') return { ok: true };
+      m.payload.lines.forEach((l) => seenFake.push(l.text));
+      return { ok: true, map: Object.fromEntries(m.payload.lines.map((l) => [l.id, '译:' + l.id])), dropped: [] };
+    };
+    toPage('track', { videoId: 'REAL', body: track(10, 'Forged') }, 'deadbeef');
+    await sleep(120);
+    const st2 = await ask();
+    check('伪造的字幕一句都没进来', st2.segments === 0, JSON.stringify(st2));
+    check('也没拿它去翻', !seenFake.some((t) => t.includes('Forged')), JSON.stringify(seenFake.slice(0, 2)));
+  }
+
+  // 发出去的消息也带着 token，注入脚本才认
+  check('发往页面的消息也带着 token',
+        posted.length > 0 && posted.every((p) => p.token === pageToken()),
+        JSON.stringify(posted.slice(-1)));
 
   console.log('\n结果：' + pass + ' 通过 / ' + fail + ' 失败');
   process.exit(fail ? 1 : 0);
