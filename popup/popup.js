@@ -25,6 +25,27 @@ const UNSUPPORTED_TEXT = {
   'no-player': '这个页面上没有播放器'
 };
 
+/* 错误码 → 说人话的一句 + 唯一的那个下一步动作。
+ *
+ * 以前弹窗直接摆服务商的原话（「HTTP 401: Incorrect API key provided: sk-***」），
+ * 用户既不知道去哪儿改，也不知道该不该重试。原话仍然留着（挂在 title 上，报障时
+ * 唯一能定位的往往就是它），但摆在最前面的是「这是什么事」和「现在该干什么」。
+ * fix 为空表示什么都不用做或者只能等。 */
+const ERROR_INFO = {
+  noKey:   { text: '还没填 API Key', fix: '去设置' },
+  noPerm:  { text: '还没授权访问这个 API 地址', fix: '去授权' },
+  auth:    { text: 'API Key 不对，或者这个 Key 没有权限', fix: '去设置' },
+  model:   { text: '接口拒收了这次请求，多半是模型名或推理参数写法不对', fix: '去设置' },
+  rate:    { text: '接口限流，稍后会自动重试', fix: '' },
+  server:  { text: '服务商那边出错了', fix: '' },
+  timeout: { text: '请求超时', fix: '' },
+  format:  { text: '模型没有按行给出译文', fix: '' },
+  network: { text: '连不上接口，检查一下网络和 API 地址', fix: '去设置' }
+};
+
+/* 重试对这几种没有意义：没填 Key、没授权、以及正在自动重试的限流。 */
+const NO_RETRY = ['noKey', 'noPerm', 'rate'];
+
 const HINTS = {
   none: '字幕翻译一般「关闭」就够，最快最省。',
   low: '略微思考，长句、双关和技术梗更稳。',
@@ -193,6 +214,9 @@ function bind() {
   document.addEventListener('click', () => openMenu(false));
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') openMenu(false); });
 
+  // 「去设置」「去授权」都落在同一个地方：那两件事都在设置页做
+  $('fixBtn').addEventListener('click', () => chrome.runtime.openOptionsPage());
+
   $('openOptions').addEventListener('click', () => chrome.runtime.openOptionsPage());
 }
 
@@ -203,7 +227,7 @@ function bind() {
 async function connectTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   tabUrl = (tab && tab.url) || '';
-  if (/^https:\/\/www\.youtube\.com\//.test(tabUrl)) tabId = tab.id;
+  tabId = /^https:\/\/www\.youtube\.com\//.test(tabUrl) ? tab.id : null;
 }
 
 /* 没有 content script 的页面各有各的原因，说清楚是哪一种。
@@ -249,6 +273,12 @@ async function refreshStatus() {
   } else if (!r.active && r.hasTracks && r.needsTranslation === false) {
     text = r.audioDubbed ? '当前是配音音轨，无需翻译' : '原声已是目标语言，无需翻译';
   }
+  /* 「没有英文字幕」这句以前是写死的，可源语言是自动识别的 —— 一个法语视频
+     照样会看到「没有英文字幕」。把真正识别出来的那个语言写进去。 */
+  if (key === 'nosub') {
+    const lang = r.audioLang || r.sourceLang;
+    if (lang) text = `这个视频没有可用的字幕轨（音轨识别为${langName(lang)}）`;
+  }
   if (r.sourceLang && !r.trackLang && key !== 'nosub') {
     text += `　·　识别为 ${langName(r.sourceLang)}`;
   }
@@ -259,9 +289,14 @@ async function refreshStatus() {
   $('barFill').style.width = r.segments ? Math.round((r.translated / r.segments) * 100) + '%' : '0%';
 
   const hasErr = !!r.error;
-  $('errText').textContent = r.error || '';
+  const info = ERROR_INFO[r.errorCode] || null;
+  $('errText').textContent = info ? info.text : (r.error || '');
+  $('errText').title = r.error || '';          // 服务商的原话留着，报障时就靠它
   $('errText').classList.toggle('hidden', !hasErr);
-  $('retryBtn').classList.toggle('hidden', !hasErr);
+  $('retryBtn').classList.toggle('hidden', !(hasErr && NO_RETRY.indexOf(r.errorCode) === -1));
+  const fix = (info && info.fix) || '';
+  $('fixBtn').textContent = fix;
+  $('fixBtn').classList.toggle('hidden', !(hasErr && fix));
   $('purgeBtn').classList.toggle('hidden', !(r.active && r.segments > 0));
 }
 

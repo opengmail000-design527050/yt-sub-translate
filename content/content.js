@@ -171,7 +171,8 @@
     running: 0,
     batchSeq: 0,             // 每发出一批就给它一个编号，兜底超时时按它点名取消
     status: 'idle',          // idle | waiting | ready | translating | error | nosub | unsupported
-    error: '',
+    error: '',               // 出错的原话（服务商说了什么），照实给用户看
+    errorCode: '',           // 九种之一，见 background 的 httpCode —— 弹窗按它决定给什么按钮
     curIdx: -1,
     settleAt: 0,             // 拖动进度条后，等到这个时刻才允许再调度（见 SEEK_SETTLE）
     cache: null,             // { items: {hash: text} }
@@ -997,6 +998,8 @@
     if (err) {
       b.state = 'err';
       st.error = err;
+      // 我们自己的兜底超时算 timeout，其余是消息通道本身出了事
+      st.errorCode = 'timeout';
       noteBatchResult(false, false);   // 网络层的错，跟批次大小无关
     } else if (res && res.ok) {
       /* split > 0 = 后端因为错位对半重来过；dropped 非空 = 有行到底也没翻出来。
@@ -1027,21 +1030,25 @@
       if (got) {
         b.state = 'done';
         st.error = '';
+        st.errorCode = '';
       } else {
         // 整批错位时后端不会进补翻，会返回 ok 但空 map。
         // 这里必须留下错误信息，否则状态会显示「已就绪」而 popup 也不给重试入口。
         b.state = 'err';
         st.error = '这一批模型没给出可用的译文，可以点重试';
+        st.errorCode = 'format';
       }
     } else {
       b.state = 'err';
       st.error = (res && res.error) || '翻译失败';
+      st.errorCode = (res && res.code) || 'network';
       // 整批失败：只有拆到底还在错位才算批次太大，401/超时之类不算
       noteBatchResult(Number((res && res.split) || 0) > 0, false);
       /* 限流：background 已经在排队了，这一批自己回来，别让用户去点重试 */
       const wait = Number((res && res.retryAfter) || 0);
       if (autoRetry(b, epoch, wait)) {
         st.error = '接口限流，' + Math.max(1, Math.round(wait / 1000)) + ' 秒后自动重试';
+        st.errorCode = 'rate';
       }
     }
 
@@ -1064,7 +1071,7 @@
       if (epoch !== st.epoch || b.state !== 'err') return;
       b.state = 'idle';
       // 别的批次还在错着的话，错误信息得留着
-      if (!st.batches.some((x) => x.state === 'err')) st.error = '';
+      if (!st.batches.some((x) => x.state === 'err')) { st.error = ''; st.errorCode = ''; }
       schedule();
       updateStatus();
     }, Math.max(1000, waitMs));
@@ -1086,6 +1093,7 @@
       st.dropped = new Set();
     }
     st.error = '';
+    st.errorCode = '';
     schedule();
   }
 
@@ -1102,6 +1110,7 @@
     st.cachePending = {};
     st.cacheDirty = false;
     st.error = '';
+    st.errorCode = '';
     resetTier();
     st.batches = st.segments.length ? makeBatches(st.segments) : [];
     st.curIdx = -1;
@@ -1663,6 +1672,7 @@
     st.curIdx = -1;
     st.settleAt = 0;
     st.error = '';
+    st.errorCode = '';
     st.status = 'idle';
     st.trackRequested = false;
     st.trackAt = 0;
@@ -1838,6 +1848,7 @@
       st.curIdx = -1;
       st.settleAt = 0;
       st.error = '';
+      st.errorCode = '';
     }
     st.trackSig = sig;
     /* 只有「我们点名要的那一份」才算把这次点名了结。先顶上来的那条（播放器自己拉的）
@@ -1976,6 +1987,7 @@
         active: st.active,
         status: st.status,
         unsupported: st.unsupported,
+        errorCode: st.errorCode,
         error: st.error,
         segments: st.segments.length,
         translated: st.trans.size,
@@ -2052,6 +2064,7 @@
     st.trans = new Map();
     st.dropped = new Set();
     st.error = '';
+    st.errorCode = '';
     st.cacheDirty = false;      // 没落盘的旧译文属于旧配置，别写了
     st.cachePending = {};
     st.cache = null;

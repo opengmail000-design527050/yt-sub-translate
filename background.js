@@ -10,7 +10,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'translateBatch') {
     translateBatch(msg.payload, tabId)
       .then(sendResponse)
-      .catch((e) => sendResponse({ ok: false, error: errText(e) }));
+      .catch((e) => sendResponse({ ok: false, code: (e && e.code) || 'network', error: errText(e) }));
     return true;
   }
 
@@ -24,7 +24,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'testApi') {
     testApi(msg.payload)
       .then(sendResponse)
-      .catch((e) => sendResponse({ ok: false, error: errText(e) }));
+      .catch((e) => sendResponse({ ok: false, code: (e && e.code) || 'network', error: errText(e) }));
     return true;
   }
 
@@ -52,6 +52,33 @@ chrome.commands.onCommand.addListener(async (cmd) => {
  * ------------------------------------------------------------------ */
 function errText(e) {
   return String((e && e.message) || e || 'unknown error');
+}
+
+/* 错误码。
+ *
+ * 以前错误是一串自由文字，直接摆进弹窗 —— 用户看到「HTTP 401: Incorrect API key
+ * provided: sk-***」，既不知道该去哪儿改，也不知道该不该重试。文案能不能改进是一回事，
+ * 更要紧的是：字符串没法让界面据此给出下一步动作。
+ *
+ * 九种，覆盖到目前为止所有失败路径。detail 仍然原样带着（服务商的原话往往是唯一
+ * 能定位的东西），但「该干什么」由 code 决定：
+ *   noKey   还没填 Key            → 去设置
+ *   noPerm  没授权这个 API 地址   → 去授权
+ *   auth    Key 不对 / 没权限     → 去设置
+ *   model   接口拒收（模型名、推理参数写法）→ 去设置
+ *   rate    限流                  → 什么都不用做，会自动重试
+ *   server  服务商那边挂了        → 稍后重试
+ *   timeout 超时                  → 稍后重试
+ *   format  模型没按行给译文      → 重试或重翻本视频
+ *   network 连不上                → 查网络和地址
+ */
+function httpCode(status) {
+  if (status === 401 || status === 403) return 'auth';
+  if (status === 408 || status === 425) return 'timeout';
+  if (status === 429) return 'rate';
+  if (status === 400 || status === 404 || status === 422) return 'model';
+  if (status >= 500) return 'server';
+  return 'server';
 }
 
 // 非默认 API 地址需要用户在设置页单独授权（manifest 里只静态声明了 api.openai.com）
@@ -223,8 +250,8 @@ function cancelError() {
 
 async function translateBatch(payload, tabId) {
   const s = await getSettings();
-  if (!s.apiKey) return { ok: false, error: '还没填 API Key（点插件图标 → 设置）' };
-  if (!(await hasApiPermission(s.baseUrl))) return { ok: false, error: PERM_HINT };
+  if (!s.apiKey) return { ok: false, code: 'noKey', error: '还没填 API Key（点插件图标 → 设置）' };
+  if (!(await hasApiPermission(s.baseUrl))) return { ok: false, code: 'noPerm', error: PERM_HINT };
 
   const lines = payload.lines || [];
   if (!lines.length) return { ok: true, map: {}, usage: null };
@@ -238,6 +265,7 @@ async function translateBatch(payload, tabId) {
     title: payload.title || '',
     totals: { prompt_tokens: 0, completion_tokens: 0, cached_tokens: 0, cached_reports: 0 },
     error: '',
+    code: '',
     repaired: 0,
     retryAfter: 0,  // 撞上限流时「还要等多久」，前端据此自动回到队列，不必人去点重试
     split: 0        // 因为错位而对半重来的次数，前端拿它判断批次是不是给大了
@@ -278,6 +306,7 @@ async function translateBatch(payload, tabId) {
   if (!r.out.size) {
     return {
       ok: false,
+      code: ctx.code || 'format',
       error: ctx.error || '模型没有返回可用的译文',
       usage,
       split: ctx.split,
@@ -352,7 +381,10 @@ async function translateChunk(ctx, items, depth, prev, next) {
   }
 
   if (!out.size) {
-    if (!ctx.error) ctx.error = r.error || '模型没有按行给出译文';
+    if (!ctx.error) {
+      ctx.error = r.error || '模型没有按行给出译文';
+      ctx.code = r.code || 'format';
+    }
     return { out: new Map(), missing: items };
   }
 
@@ -377,7 +409,7 @@ async function translateChunk(ctx, items, depth, prev, next) {
     }
     /* 拆到头还在错位：这一块整个不要。宁可这几句只显示原文，
      * 也不能把「快一句」的译文摆上去 —— 那比没有更误导，还会毒化缓存。 */
-    if (!ctx.error) ctx.error = '有几行模型反复错位，已跳过（只显示原文）';
+    if (!ctx.error) { ctx.error = '有几行模型反复错位，已跳过（只显示原文）'; ctx.code = 'format'; }
     ctx.split++;
     return { out: new Map(), missing: items };
   }
@@ -579,17 +611,25 @@ async function askModel(s, items, ref, mode, sourceLang, noPunct, title, job) {
     data = await postJson(joinUrl(s.baseUrl), s.apiKey, body, 90000, 1, job);
   } catch (e) {
     // retryAfter 一路带回前端：限流不该变成一条要人去点的红字，等一会儿自己重来就好
-    return { map: {}, usage: null, error: errText(e), retryAfter: (e && e.retryAfter) || 0 };
+    return {
+      map: {}, usage: null,
+      error: errText(e),
+      code: (e && e.code) || 'network',
+      retryAfter: (e && e.retryAfter) || 0
+    };
   }
 
   const content =
     (data && data.choices && data.choices[0] && data.choices[0].message &&
       (data.choices[0].message.content || '')) || '';
   if (!content.trim()) {
-    return { map: {}, usage: data && data.usage, error: '模型返回空内容（可能是推理档位太高、max_tokens 太小或模型不支持）' };
+    return {
+      map: {}, usage: data && data.usage, code: 'format',
+      error: '模型返回空内容（可能是推理档位太高、max_tokens 太小或模型不支持）'
+    };
   }
 
-  return { map: parseLines(content, items), usage: data.usage || null, error: null };
+  return { map: parseLines(content, items), usage: data.usage || null, error: null, code: '' };
 }
 
 /** 把 "<n>|译文" 解析成 { n: 译文 }。认不出编号的行一律丢掉，绝不猜它属于哪一句。 */
@@ -716,6 +756,7 @@ async function postJson(url, key, body, timeoutMs, retries, job) {
           detail = (j.error && (j.error.message || j.error.code)) || detail;
         } catch (_) {}
         const err = new Error(`HTTP ${res.status}: ${detail}`);
+        err.code = httpCode(res.status);
         /* 暂时性的才重发：
          *   408 请求超时、425 太早、429 限流，以及所有 5xx。
          * 其余（400 请求不合法、401 key 不对、403 没权限、404 模型名不对、
@@ -749,7 +790,14 @@ async function postJson(url, key, body, timeoutMs, retries, job) {
       if (job && job.cancelled) throw cancelError();
       lastErr = e;
       if (e && e.noRetry) throw e;
-      if (e && e.name === 'AbortError') { if (attempt < retries) continue; throw new Error('请求超时'); }
+      if (e && e.name === 'AbortError') {
+        if (attempt < retries) continue;
+        const t = new Error('请求超时');
+        t.code = 'timeout';
+        throw t;
+      }
+      // 这里剩下的基本都是 fetch 自己抛的（DNS、断网、证书、CORS）
+      if (e && !e.code) e.code = 'network';
       if (attempt >= retries) throw e;
       await sleep(1000 * (attempt + 1));
     }
@@ -880,8 +928,8 @@ function addUsage(usage, align) {
  * ------------------------------------------------------------------ */
 async function testApi(override) {
   const s = Object.assign({}, DEFAULTS, await getSettings(), override || {});
-  if (!s.apiKey) return { ok: false, error: '缺少 API Key' };
-  if (!(await hasApiPermission(s.baseUrl))) return { ok: false, error: PERM_HINT };
+  if (!s.apiKey) return { ok: false, code: 'noKey', error: '缺少 API Key' };
+  if (!(await hasApiPermission(s.baseUrl))) return { ok: false, code: 'noPerm', error: PERM_HINT };
 
   const body = {
     model: s.model,

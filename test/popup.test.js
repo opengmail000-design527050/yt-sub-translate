@@ -57,6 +57,8 @@ const doc = {
 const storage = {};
 const sent = [];              // 发给页面的消息
 let optionsOpened = 0;
+let statusReply = null;       // content 那边 getStatus 的回应，用例自己摆
+let tabUrl = 'https://www.youtube.com/watch?v=abc';
 
 const chrome = {
   storage: {
@@ -72,8 +74,11 @@ const chrome = {
     onChanged: { addListener() {} }
   },
   tabs: {
-    async query() { return [{ id: 7, url: 'https://www.youtube.com/watch?v=abc' }]; },
-    async sendMessage(tabId, msg) { sent.push(msg); return null; }
+    async query() { return [{ id: 7, url: tabUrl }]; },
+    async sendMessage(tabId, msg) {
+      sent.push(msg);
+      return msg && msg.type === 'getStatus' ? statusReply : null;
+    }
   },
   runtime: { openOptionsPage() { optionsOpened++; }, sendMessage: async () => ({ ok: false }) },
   i18n: { getUILanguage: () => 'zh-CN' }
@@ -101,7 +106,11 @@ storage.settings = {
   fontSize: 31, reasoning: 'low'
 };
 
-vm.runInContext(common + '\n' + popup + '\nglobalThis.__p = { init, getP: () => P, getS: () => S };',
+/* popup.js 里 LANG_NAMES 是 import 时起的别名，import 被剥掉之后就没人定义它了。
+   在两段代码中间补一句，等价于那句 import。 */
+const alias = 'const LANG_NAMES = CODE_TO_NAME;';
+
+vm.runInContext(common + alias + '\n' + popup + '\nglobalThis.__p = { init, getP: () => P, getS: () => S, refreshStatus };',
                 ctx, { filename: 'popup-bundle.js' });
 const O = vm.runInContext('globalThis.__p', ctx);
 
@@ -238,6 +247,72 @@ const itemText = (b) => b._kids.map((k) => k.textContent).join(' · ') || b.text
   clickTag();
   (docOn.keydown || []).forEach((f) => f({ key: 'a' }));
   check('别的键不受影响', !$('pfMenu').classList.contains('hidden'));
+
+  /* ---------------------------------------------------------------- *
+   * [8] 错误码：每一种都有说人话的一句和唯一的那个下一步
+   * ---------------------------------------------------------------- */
+  console.log('\n[8] 错误码决定文案和按钮');
+  const shown = (id) => !$(id).classList.contains('hidden');
+  const say = async (r) => { statusReply = r; await O.refreshStatus(); };
+
+  await say({ onYoutube: true, active: true, status: 'error', segments: 10, translated: 0,
+              error: 'HTTP 401: Incorrect API key provided: sk-xxx', errorCode: 'auth' });
+  check('说的是「Key 不对」而不是一串 HTTP', $('errText').textContent.includes('API Key 不对'),
+        $('errText').textContent);
+  check('服务商的原话留在 title 里，报障时还找得回来',
+        $('errText').title.includes('Incorrect API key'), $('errText').title);
+  check('给了「去设置」这个下一步', shown('fixBtn') && $('fixBtn').textContent === '去设置',
+        $('fixBtn').textContent);
+  const openedBefore = optionsOpened;
+  fire($('fixBtn'), 'click');
+  check('点它就打开设置页', optionsOpened > openedBefore, String(optionsOpened));
+
+  await say({ onYoutube: true, active: true, status: 'error', segments: 10, translated: 3,
+              error: 'HTTP 429: rate limited', errorCode: 'rate' });
+  check('限流不给重试按钮（正在自动重试，点它没有意义）', !shown('retryBtn'));
+  check('限流也不催人去改设置', !shown('fixBtn'));
+  check('文案说清楚会自己重试', $('errText').textContent.includes('自动重试'), $('errText').textContent);
+
+  await say({ onYoutube: true, active: true, status: 'error', segments: 10, translated: 3,
+              error: '请求超时', errorCode: 'timeout' });
+  check('超时给重试', shown('retryBtn'));
+  check('超时不催人去改设置', !shown('fixBtn'));
+
+  await say({ onYoutube: true, active: false, status: 'error', segments: 0, translated: 0,
+              error: '还没填 API Key（点插件图标 → 设置）', errorCode: 'noKey' });
+  check('没填 Key 时不给重试（重试多少次都一样）', !shown('retryBtn'));
+  check('给的是「去设置」', shown('fixBtn') && $('fixBtn').textContent === '去设置');
+
+  await say({ onYoutube: true, active: true, status: 'ready', segments: 10, translated: 10, error: '' });
+  check('没出错时按钮都收起来', !shown('errText') && !shown('retryBtn') && !shown('fixBtn'));
+
+  /* ---------------------------------------------------------------- *
+   * [9] 没有字幕轨时，说的是真正识别出来的那个语言
+   * ---------------------------------------------------------------- */
+  console.log('\n[9] 没有字幕轨');
+  await say({ onYoutube: true, active: false, status: 'nosub', segments: 0, translated: 0,
+              audioLang: 'fr', hasTracks: false });
+  check('不再写死「没有英文字幕」', !$('statusText').textContent.includes('英文'),
+        $('statusText').textContent);
+  check('写的是识别出来的那个语言', $('statusText').textContent.includes('Français'),
+        $('statusText').textContent);
+
+  /* ---------------------------------------------------------------- *
+   * [10] 不支持的页面直说原因
+   * ---------------------------------------------------------------- */
+  console.log('\n[10] 不支持的页面');
+  await say({ onYoutube: true, active: false, status: 'unsupported', unsupported: 'live',
+              segments: 0, translated: 0 });
+  check('直播直说不支持', $('statusText').textContent.includes('直播'), $('statusText').textContent);
+  check('不再显示「正在获取字幕…」', !$('statusText').textContent.includes('获取字幕'));
+
+  tabUrl = 'https://www.youtube-nocookie.com/embed/abc';
+  statusReply = null;
+  await freshPopup();
+  await sleep(10);
+  check('嵌入页说的是「在 YouTube 上打开」，不是「不是 YouTube 页面」',
+        $('statusText').textContent.includes('嵌入'), $('statusText').textContent);
+  tabUrl = 'https://www.youtube.com/watch?v=abc';
 
   console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
   process.exit(fail ? 1 : 0);
