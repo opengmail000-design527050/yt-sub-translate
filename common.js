@@ -69,8 +69,21 @@ export const NAME_TO_CODE = (() => {
   const m = {};
   for (const [code, name] of Object.entries(CODE_TO_NAME)) if (!m[name]) m[name] = code;
   Object.assign(m, { '中文': 'zh', '英文': 'en', '英语': 'en', '日文': 'ja', '日语': 'ja', '韩语': 'ko' });
+  /* 简体中文按 zh-CN 算，不按反查得到的 zh。
+   * 这不是口味问题：内容脚本的缓存键里带着这个值（见 cacheSig），而它一直是 zh-CN。
+   * 反查出来的 zh 会让每一个把目标语言设成「简体中文」的用户 —— 也就是绝大多数 ——
+   * 已存的缓存全部一次性落空，为一件跟他无关的重构重新买一遍译文。 */
+  m['简体中文'] = 'zh-CN';
   return m;
 })();
+
+/* 字体栈。content 的字幕框和设置页的预览必须是同一份，
+ * 否则预览里挑好的字体，到了播放器上是另一种。 */
+export const FONT_STACKS = {
+  serif: '"Georgia", "Iowan Old Style", "Palatino Linotype", Constantia, "Noto Serif SC", "Source Han Serif SC", "Songti SC", STSong, serif',
+  sans: '"Inter", "Helvetica Neue", -apple-system, "Segoe UI", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif',
+  kai: '"Constantia", "Cambria", Georgia, "Kaiti SC", STKaiti, KaiTi, "Noto Serif SC", serif'
+};
 
 export function uiLanguage() {
   try { return chrome.i18n.getUILanguage() || 'zh-CN'; } catch (_) { return 'zh-CN'; }

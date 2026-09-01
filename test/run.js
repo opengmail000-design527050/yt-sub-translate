@@ -1,6 +1,15 @@
 /* 一把跑完所有测试。用法：node test/run.js（在哪个目录下跑都行） */
 const fs = require('fs'), path = require('path'), cp = require('child_process');
 
+/* 先打包：内容脚本的测试跑的是 dist 里那一份（打包这一步本身也会出错，
+   拿源码去测就永远发现不了）。 */
+const build = cp.spawnSync(process.execPath, [path.join(__dirname, '..', 'tools', 'build.mjs')], { encoding: 'utf8' });
+if (build.status !== 0) {
+  console.log('打包失败，测试没法跑：');
+  console.log((build.stdout || '') + (build.stderr || ''));
+  process.exit(1);
+}
+
 const dir = __dirname;
 const files = fs.readdirSync(dir).filter((f) => f.endsWith('.test.js')).sort();
 

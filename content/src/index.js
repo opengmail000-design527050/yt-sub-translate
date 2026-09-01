@@ -1,6 +1,13 @@
 /* Sub Translator —— 内容脚本（隔离世界）
  * 负责：注入主世界脚本、拿字幕、切句、按播放头懒翻译、渲染叠加层、播放器按钮。
+ *
+ * 这个文件是打包的入口：npm run build 会把它和它 import 的东西打成一个
+ * dist/content/content.js（内容脚本不能是 ES 模块，必须是一段普通脚本）。
+ * 常量因此只有一份 —— 以前 DEFAULTS 和 FONT_STACKS 在这里、common.js、options.js
+ * 各抄一遍，改默认值要记得同步三处，忘一处就是「设置页显示的和实际生效的不一样」。
  */
+import { DEFAULTS, FONT_STACKS, NAME_TO_CODE, sameLanguage as sameLang, uiLanguage } from '../../common.js';
+
 (function () {
   'use strict';
   if (window.__YTST_CONTENT__) return;
@@ -25,40 +32,12 @@
     }
   }
 
-  /* ------------------------------------------------------------------ *
-   * 配置（与 common.js 保持一致）
-   * ------------------------------------------------------------------ */
-  const DEFAULTS = {
-    enabled: true, autoStart: true,
-    baseUrl: 'https://api.openai.com/v1', apiKey: '', model: 'gpt-5.6-luna', targetLang: 'auto',
-    reasoning: 'none', reasoningStyle: 'effort_none',
-    layout: 'both', fontFamily: 'serif', fontSize: 24, autoScale: true, origScale: 0.8,
-    maxWidth: 88, bgOpacity: 0.55, hideNative: true, posX: null, posY: null,
-    batchChars: 1500, batchLines: 20, lookahead: 45,
-    useContext: true, useCache: true, cacheDays: 60, cacheMax: 300, concurrency: 3,
-    density: 'standard',
-    temperature: '', maxTokens: '', extraPrompt: ''
-  };
-
   /* ---------- 语言 ---------- */
-  const NAME_TO_CODE = {
-    '简体中文': 'zh-CN', '繁體中文': 'zh-TW', '中文': 'zh', 'English': 'en', '英文': 'en',
-    '英语': 'en', '日本語': 'ja', '日文': 'ja', '日语': 'ja', '한국어': 'ko', '韩语': 'ko',
-    'Français': 'fr', 'Deutsch': 'de', 'Español': 'es', 'Русский': 'ru',
-    'Português': 'pt', 'Italiano': 'it', 'ไทย': 'th', 'Tiếng Việt': 'vi',
-    'العربية': 'ar', 'हिन्दी': 'hi'
-  };
-
   function targetCode() {
     const t = String(S.targetLang || 'auto').trim();
-    if (!t || t.toLowerCase() === 'auto') {
-      try { return chrome.i18n.getUILanguage() || 'zh-CN'; } catch (_) { return 'zh-CN'; }
-    }
+    if (!t || t.toLowerCase() === 'auto') return uiLanguage();
     return NAME_TO_CODE[t] || '';    // 认不出的自定义写法：返回空，表示不做同语言判断
   }
-
-  const sameLang = (a, b) =>
-    !!a && !!b && String(a).toLowerCase().split('-')[0] === String(b).toLowerCase().split('-')[0];
 
   /** 挑一条最合适的字幕轨，并顺带确定「要翻的这段文字是什么语言」。
    *  自动字幕（ASR）一定是按原声语言生成的，所以它是最可靠的语言判据；
@@ -124,11 +103,6 @@
     full: { soft: 130, hard: 180 }
   };
 
-  const FONT_STACKS = {
-    serif: '"Georgia", "Iowan Old Style", "Palatino Linotype", Constantia, "Noto Serif SC", "Source Han Serif SC", "Songti SC", STSong, serif',
-    sans: '"Inter", "Helvetica Neue", -apple-system, "Segoe UI", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif',
-    kai: '"Constantia", "Cambria", Georgia, "Kaiti SC", STKaiti, KaiTi, "Noto Serif SC", serif'
-  };
   let S = Object.assign({}, DEFAULTS);
   /* 注入被提到了读设置之前（见 boot 的注释），所以在设置真正读回来之前
    * 有一小段时间 S 还是 DEFAULTS —— 而 DEFAULTS 里 autoStart 是 true、

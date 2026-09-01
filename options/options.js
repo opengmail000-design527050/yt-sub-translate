@@ -1,6 +1,6 @@
 import { DEFAULTS, getSettings, setSettings, resolveTargetName, uiLanguage,
          originPattern, hasApiPermission,
-         PROFILE_KEYS, getProfiles, saveProfiles, newProfileId, pickProfile } from '../common.js';
+         PROFILE_KEYS, getProfiles, saveProfiles, newProfileId, pickProfile, FONT_STACKS } from '../common.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -9,12 +9,6 @@ const $ = (id) => document.getElementById(id);
 const TEXT_FIELDS = ['baseUrl', 'apiKey', 'model', 'targetLang',
                      'reasoningStyle', 'layout', 'fontFamily', 'density'];
 
-/* 与 content.js 里的 FONT_STACKS 保持一致 */
-const FONT_STACKS = {
-  serif: '"Georgia", "Iowan Old Style", "Palatino Linotype", Constantia, "Noto Serif SC", "Source Han Serif SC", "Songti SC", STSong, serif',
-  sans: '"Inter", "Helvetica Neue", -apple-system, "Segoe UI", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif',
-  kai: '"Constantia", "Cambria", Georgia, "Kaiti SC", STKaiti, KaiTi, "Noto Serif SC", serif'
-};
 
 const FONT_NOTES = {
   serif: '字形有呼吸感，久看不累。',

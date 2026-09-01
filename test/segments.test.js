@@ -1,5 +1,5 @@
 /* 切句与时间轴。重点：长静音处下一句不能提前冒出来。 */
-const fs = require('fs'), vm = require('vm');
+const vm = require('vm');
 
 const noop = () => {};
 const makeEl = () => ({
@@ -38,7 +38,7 @@ const win = {
 };
 win.window = win; win.self = win;
 const ctx = vm.createContext(win);
-vm.runInContext(fs.readFileSync(__dirname + '/../content/content.js', 'utf8'), ctx, { filename: 'content.js' });
+vm.runInContext(require('./bundle')(), ctx, { filename: 'content.js' });
 const T = vm.runInContext('window.__YTST_TEST__', ctx);
 
 const segsOf = (events) => T.buildSegments(T.parseJson3(JSON.stringify({ events })));

@@ -1,6 +1,6 @@
 /* 视频自带译文轨 + 音轨切换。
  * 桩环境跑 content.js，不联网：这里最该守住的是「一个 token 都不该花」。 */
-const fs = require('fs'), vm = require('vm');
+const vm = require('vm');
 
 function makeEl(tag) {
   return {
@@ -94,7 +94,7 @@ win.window = win; win.self = win; win.document = doc; win.chrome = chrome;
 win.location = { href: 'https://www.youtube.com/watch?v=A' };
 
 const ctx = vm.createContext(win);
-vm.runInContext(fs.readFileSync(__dirname + '/../content/content.js', 'utf8'), ctx, { filename: 'content.js' });
+vm.runInContext(require('./bundle')(), ctx, { filename: 'content.js' });
 const vmWindow = vm.runInContext('window', ctx);
 const T = vm.runInContext('window.__YTST_TEST__', ctx);
 

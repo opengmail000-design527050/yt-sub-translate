@@ -1,5 +1,5 @@
 /* 用桩环境跑 content.js，验证状态机路径。不联网、不碰真实存储。 */
-const fs = require('fs'), vm = require('vm');
+const vm = require('vm');
 
 function makeEl(tag) {
   return {
@@ -107,7 +107,7 @@ win.window = win; win.self = win; win.document = doc; win.chrome = chrome;
 win.location = { href: 'https://www.youtube.com/watch?v=A', pathname: '/watch' };
 
 const ctx = vm.createContext(win);
-vm.runInContext(fs.readFileSync(__dirname + '/../content/content.js', 'utf8'), ctx, { filename: 'content.js' });
+vm.runInContext(require('./bundle')(), ctx, { filename: 'content.js' });
 /* vm 里的 window 是沙箱全局代理，跟宿主的 win 不是同一个对象；
    content.js 用 e.source !== window 做校验，所以事件里必须带 vm 侧的那个。 */
 const vmWindow = vm.runInContext('window', ctx);

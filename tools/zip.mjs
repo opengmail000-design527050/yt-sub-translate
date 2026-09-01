@@ -10,20 +10,10 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-/* 进包的东西。反过来写「排除什么」太容易漏 —— 哪天多一个 .env 或者
- * notes.md 就跟着进了商店包，所以这里是白名单。 */
-const INCLUDE = [
-  'manifest.json',
-  'background.js',
-  'common.js',
-  'content',
-  'popup',
-  'options',
-  'icons',
-  '_locales'
-];
-/* 目录里仍然要挑一遍：icons/ 下有生成脚本，options/ 下将来可能有草稿 */
-const SKIP = /(^|\/)(make-icons\.js|\.DS_Store|.*\.map)$/;
+/* 打的是 dist/ —— 那才是真正装进浏览器的那一份（内容脚本是打包出来的）。
+ * 挑哪些文件进 dist 由 tools/build.mjs 的白名单决定，这里照单全收就行。 */
+const SRC = 'dist';
+const SKIP = /(^|\/)(\.DS_Store|.*\.map)$/;
 
 function walk(rel, out) {
   const abs = path.join(root, rel);
@@ -59,7 +49,7 @@ function build(files) {
   let offset = 0;
   for (const rel of files) {
     const name = Buffer.from(zipName(rel), 'utf8');
-    const raw = fs.readFileSync(path.join(root, rel));
+    const raw = fs.readFileSync(path.join(root, SRC, rel));
     const deflated = zlib.deflateRawSync(raw, { level: 9 });
     // 压不动的（png 之类）就原样存，省得比原文件还大
     const useStore = deflated.length >= raw.length;
@@ -109,16 +99,17 @@ function build(files) {
   return Buffer.concat([...locals, cdBuf, end]);
 }
 
-const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
-const files = INCLUDE.flatMap((p) => walk(p, []));
-if (!files.includes('manifest.json')) {
-  console.error('没有 manifest.json，这不是扩展目录');
+if (!fs.existsSync(path.join(root, SRC, 'manifest.json'))) {
+  console.error('dist/ 里没有 manifest.json —— 先跑 npm run build');
   process.exit(1);
 }
+const manifest = JSON.parse(fs.readFileSync(path.join(root, SRC, 'manifest.json'), 'utf8'));
+// zip 里的路径要从扩展根算起，不能带 dist/ 这一层，否则加载出来是空的
+const files = walk(SRC, []).map((p) => path.relative(SRC, p));
 
-const dist = path.join(root, 'dist');
-fs.mkdirSync(dist, { recursive: true });
-const out = path.join(dist, `sub-translator-${manifest.version}.zip`);
+const outDir = path.join(root, 'build');
+fs.mkdirSync(outDir, { recursive: true });
+const out = path.join(outDir, `sub-translator-${manifest.version}.zip`);
 const buf = build(files);
 fs.writeFileSync(out, buf);
 console.log(`${path.relative(root, out)}  ${files.length} 个文件 · ${(buf.length / 1024).toFixed(1)} KB`);

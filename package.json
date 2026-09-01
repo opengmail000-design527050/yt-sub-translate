@@ -4,14 +4,18 @@
   "private": true,
   "description": "YouTube 双语字幕翻译 Chrome 扩展",
   "scripts": {
+    "build": "node tools/build.mjs",
     "test": "node test/run.js",
     "lint": "eslint .",
-    "zip": "node tools/zip.mjs",
+    "zip": "npm run build && node tools/zip.mjs",
     "check": "npm run lint && npm test"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
+    "esbuild": "^0.28.2",
     "eslint": "^9.0.0"
   },
-  "engines": { "node": ">=18" }
+  "engines": {
+    "node": ">=18"
+  }
 }

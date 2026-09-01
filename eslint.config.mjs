@@ -38,8 +38,9 @@ export default [
     rules: shared
   },
   {
-    // content script 不是模块，是一个 IIFE
-    files: ['content/**/*.js'],
+    /* inject.js 直接以普通脚本注入页面，不打包也不是模块。
+       content/src/ 下的才是模块（打包成 dist/content/content.js）。 */
+    files: ['content/inject.js'],
     languageOptions: { sourceType: 'script' }
   },
   {

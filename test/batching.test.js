@@ -3,7 +3,7 @@
  *   - 一出现错位立刻回落，而且不再试那一档
  *   - 网络层的错误不算数，不该拖累批次大小
  * 用桩跑 content.js，不联网、不碰真实存储。 */
-const fs = require('fs'), vm = require('vm');
+const vm = require('vm');
 
 function makeEl(tag) {
   return {
@@ -105,7 +105,7 @@ win.window = win; win.self = win; win.document = doc; win.chrome = chrome;
 win.location = { href: 'https://www.youtube.com/watch?v=A' };
 
 const ctx = vm.createContext(win);
-vm.runInContext(fs.readFileSync(__dirname + '/../content/content.js', 'utf8'), ctx, { filename: 'content.js' });
+vm.runInContext(require('./bundle')(), ctx, { filename: 'content.js' });
 const vmWindow = vm.runInContext('window', ctx);
 
 /* 注入时内容脚本会现生成一个随机 token 挂在 script 标签上，之后只认带这个 token
