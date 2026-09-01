@@ -138,6 +138,9 @@
     needsTranslation: false, // 原声语言与目标语言不同才需要翻
     active: false,           // 当前视频翻译是否开启
     userOff: false,          // 用户在本视频手动关过
+    isLive: false,           // 正在直播（不是「曾经是直播」的录播）
+    isUpcoming: false,       // 还没开始的首播
+    unsupported: '',         // '' | live | upcoming | shorts | no-player，见 pageUnsupported
     rawCues: null,           // 原始 cue，改字幕长度档位时用来重新切句
     noPunct: false,          // 这一轨的原文没有标点（多半是自动字幕），翻译时要额外提示模型
     segments: [],            // [{id,start,end,text}]
@@ -150,7 +153,7 @@
     batchDirty: 0,           // 连续几批出了错位（连着两批才封顶，见 noteBatchResult）
     running: 0,
     batchSeq: 0,             // 每发出一批就给它一个编号，兜底超时时按它点名取消
-    status: 'idle',          // idle | waiting | ready | translating | error | nosub
+    status: 'idle',          // idle | waiting | ready | translating | error | nosub | unsupported
     error: '',
     curIdx: -1,
     settleAt: 0,             // 拖动进度条后，等到这个时刻才允许再调度（见 SEEK_SETTLE）
@@ -1091,7 +1094,41 @@
     schedule();
   }
 
+  /* ------------------------------------------------------------------ *
+   * 这个页面根本没得翻
+   *
+   * 以前这几种情况的表现都是「一直转圈」：直播卡在「正在获取字幕…」，每 8 秒重新
+   * 要一次轨、每 3.5 秒试着替用户打开原生字幕，无止境；Shorts 页没有 #movie_player，
+   * 弹窗写「页面未就绪，刷新一下试试」—— 刷多少次都一样。
+   * 说不出原因的等待比直说「这儿不支持」糟得多：用户会一直以为是自己哪儿没弄对。
+   * ------------------------------------------------------------------ */
+  const PLAYER_GRACE = 25000;      // 播放器最多容它这么久没出现（慢网、前贴片广告）
+  let bootAt = Date.now();
+
+  function pageUnsupported() {
+    try { if (/^\/shorts\//.test(location.pathname)) return 'shorts'; } catch (_) {}
+    if (st.isLive) return 'live';
+    if (st.isUpcoming) return 'upcoming';
+    // 播放器一直没出现：多半是频道页、播放列表页这类根本没有播放器的地方
+    if (!st.videoId && !getPlayerEl() && Date.now() - bootAt > PLAYER_GRACE) return 'no-player';
+    return '';
+  }
+
+  function refreshUnsupported() {
+    const was = st.unsupported;
+    st.unsupported = pageUnsupported();
+    if (was === st.unsupported) return;
+    if (st.unsupported) {
+      if (st.active) stop(false);     // 不算用户关的：直播结束了还要自己接上
+      updateStatus();
+    } else {
+      evaluateTracks();               // 从「不支持」里出来了，重新判一遍语言和自动开启
+    }
+  }
+
   function updateStatus() {
+    // 不支持的页面压过一切：说清楚为什么，别再显示「正在获取字幕…」
+    if (st.unsupported) { st.status = 'unsupported'; renderStatusChip(); return; }
     if (!st.active) { st.status = 'idle'; }
     else if (!st.segments.length) { st.status = st.status === 'nosub' ? 'nosub' : 'waiting'; }
     else if (st.running > 0) { st.status = 'translating'; }
@@ -1541,6 +1578,8 @@
   }
 
   function requestTrack() {
+    // 直播 / Shorts / 没有播放器：没有轨可拉，别没完没了地要
+    if (st.unsupported) return;
     /* 原来是「一个视频只许要一次」。可失败的路子太多了 —— 字幕轨列表比播放器信息晚到、
      * 直接拉取被 YouTube 拒了、兜底打开原生字幕时播放器还没装好 captions 模块。
      * 一旦撞上，这个标签页就永远停在「等字幕」，只能重开浏览器。
@@ -1582,6 +1621,10 @@
     bumpEpoch();                      // 在途的旧请求从此作废
     st.videoId = data.videoId;
     st.title = data.title || '';
+    st.isLive = !!data.isLive;
+    st.isUpcoming = !!data.isUpcoming;
+    bootAt = Date.now();
+    st.unsupported = pageUnsupported();
     st.audioLang = data.audioLang || '';
     st.audioDubbed = false;
     st.tracks = data.tracks || [];
@@ -1644,6 +1687,8 @@
       st.adoptCues = null;
       st.adoptReq = 0;
     }
+
+    if (st.unsupported) { updateStatus(); return; }
 
     if (!st.tracks.length) {
       if (!st.active) { st.status = 'nosub'; renderStatusChip(); }
@@ -1841,8 +1886,14 @@
     if (m.type === 'player') {
       const d = m.data || {};
       if (!d.videoId) return;
-      if (d.videoId !== st.videoId) resetVideo(d);
-      else if (d.tracks && d.tracks.length !== st.tracks.length) {
+      if (d.videoId !== st.videoId) { resetVideo(d); return; }
+      // 首播开始播了、直播结束了，这两个标记都会变
+      if (st.isLive !== !!d.isLive || st.isUpcoming !== !!d.isUpcoming) {
+        st.isLive = !!d.isLive;
+        st.isUpcoming = !!d.isUpcoming;
+        refreshUnsupported();
+      }
+      if (d.tracks && d.tracks.length !== st.tracks.length) {
         // 字幕轨比第一份播放器信息晚到（常见于刚上传或长视频）：
         // 光更新数组不够，语言判定、状态、自动开始都得重来一遍
         st.tracks = d.tracks;
@@ -1902,6 +1953,7 @@
         needsTranslation: st.needsTranslation,
         active: st.active,
         status: st.status,
+        unsupported: st.unsupported,
         error: st.error,
         segments: st.segments.length,
         translated: st.trans.size,
@@ -2026,9 +2078,10 @@
     let n = 0;
     const iv = setInterval(() => {
       if (st.videoId && st.tracks.length) { clearInterval(iv); return; }
+      if (st.unsupported) return;     // 直播 / Shorts：问了也没有轨，别空转
       post2page('probe');
       // 前 30 秒每秒问一次，之后降到 5 秒一次，一直陪到底
-      if (++n === 30) { clearInterval(iv); setInterval(() => { if (!st.videoId || !st.tracks.length) post2page('probe'); }, 5000); }
+      if (++n === 30) { clearInterval(iv); setInterval(() => { if ((!st.videoId || !st.tracks.length) && !st.unsupported) post2page('probe'); }, 5000); }
     }, 1000);
   }
 
@@ -2040,12 +2093,16 @@
     requestAnimationFrame(loop);
     setInterval(observeUi, 1000);
     setInterval(() => {
+      refreshUnsupported();          // Shorts 是靠地址认的，站内跳转随时会变
       if (!st.active) return;
       schedule();
       // 开着却一句都没拿到：字幕轨也许刚到、也许上次是偶发失败，再要一次
       if (!st.segments.length && st.tracks.length) requestTrack();
     }, 2000);
-    document.addEventListener('yt-navigate-finish', () => setTimeout(() => post2page('probe'), 300));
+    document.addEventListener('yt-navigate-finish', () => {
+      bootAt = Date.now();           // 换页了，播放器的宽限期重新开始算
+      setTimeout(() => post2page('probe'), 300);
+    });
     setTimeout(() => post2page('probe'), 800);
     keepProbing();
     await loadSettings();

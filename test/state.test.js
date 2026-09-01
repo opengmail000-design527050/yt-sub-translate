@@ -98,7 +98,7 @@ const win = {
   console
 };
 win.window = win; win.self = win; win.document = doc; win.chrome = chrome;
-win.location = { href: 'https://www.youtube.com/watch?v=A' };
+win.location = { href: 'https://www.youtube.com/watch?v=A', pathname: '/watch' };
 
 const ctx = vm.createContext(win);
 vm.runInContext(fs.readFileSync(__dirname + '/../content/content.js', 'utf8'), ctx, { filename: 'content.js' });
@@ -704,6 +704,78 @@ const check = (name, cond, extra) => {
     const one = sent.filter((m) => m.type === 'cancel' && m.payload && m.payload.batchId > 0);
     check('顺带点名让 background 把那一批掐掉', one.length > 0,
           JSON.stringify(sent.filter((m) => m.type === 'cancel').map((m) => m.payload)));
+  }
+
+  console.log('\n[24] 正在直播的视频');
+  {
+    /* 以前这里的表现是永远转圈：卡在「正在获取字幕…」，每 8 秒重新要一次轨、
+       每 3.5 秒试着替用户打开原生字幕，无止境。说不出原因的等待比直说「不支持」
+       糟得多 —— 用户会一直以为是自己哪儿没弄对。 */
+    runtimeReply = async (m) => (m.type === 'cacheIndex' ? { ok: true } : { ok: true, map: {}, dropped: [] });
+    posted.length = 0;
+    toPage('player', {
+      videoId: 'LIVE', title: 'live', audioLang: 'en', isLive: true, isLiveContent: true,
+      tracks: [{ languageCode: 'en', kind: 'asr' }]
+    });
+    await sleep(200);
+    const s = await ask();
+    check('状态说得出原因', s.status === 'unsupported' && s.unsupported === 'live', JSON.stringify(s));
+    check('不去要字幕轨', !posted.some((p) => p.type === 'fetchTrack'),
+          JSON.stringify(posted.map((p) => p.type)));
+    check('也不替用户打开原生字幕', !posted.some((p) => p.type === 'enableNative'),
+          JSON.stringify(posted.map((p) => p.type)));
+    check('没有自动开启', s.active === false, JSON.stringify(s));
+  }
+
+  console.log('\n[25] 直播的录播照常翻');
+  {
+    /* isLive 和 isLiveContent 是两回事：后者对「曾经是直播」的录播也为真。
+       拿它当判据的话，一大半播客（都是直播完再挂上来的）会被一并挡掉。 */
+    posted.length = 0;
+    toPage('player', {
+      videoId: 'VOD', title: 'vod', audioLang: 'en', isLive: false, isLiveContent: true,
+      tracks: [{ languageCode: 'en', kind: 'asr' }]
+    });
+    await sleep(60);
+    const s = await ask();
+    check('录播不算不支持', !s.unsupported, JSON.stringify(s));
+    check('照常去要字幕轨', posted.some((p) => p.type === 'fetchTrack'),
+          JSON.stringify(posted.map((p) => p.type)));
+    toPage('track', { videoId: 'VOD', body: track(10, 'Vod') });
+    await sleep(150);
+    check('照常翻出来', (await ask()).segments > 0);
+  }
+
+  console.log('\n[26] Shorts');
+  {
+    posted.length = 0;
+    win.location.pathname = '/shorts/abcdefg';
+    toPage('player', { videoId: 'SH', title: 'sh', audioLang: 'en', tracks: [{ languageCode: 'en', kind: 'asr' }] });
+    await sleep(120);
+    const s = await ask();
+    check('直说 Shorts 不支持', s.status === 'unsupported' && s.unsupported === 'shorts', JSON.stringify(s));
+    check('不空转着要字幕', !posted.some((p) => p.type === 'fetchTrack'),
+          JSON.stringify(posted.map((p) => p.type)));
+    win.location.pathname = '/watch';
+  }
+
+  console.log('\n[27] 首播开始之后自己接上');
+  {
+    posted.length = 0;
+    toPage('player', { videoId: 'PRE', title: 'pre', audioLang: 'en', isUpcoming: true,
+                       tracks: [{ languageCode: 'en', kind: 'asr' }] });
+    await sleep(80);
+    const before = await ask();
+    check('还没开始时说清楚', before.unsupported === 'upcoming', JSON.stringify(before));
+
+    // 开播了：同一个 videoId，只是标记变了
+    toPage('player', { videoId: 'PRE', title: 'pre', audioLang: 'en', isUpcoming: false,
+                       tracks: [{ languageCode: 'en', kind: 'asr' }] });
+    await sleep(120);
+    const after = await ask();
+    check('标记一变就不再挡着', !after.unsupported, JSON.stringify(after));
+    check('该要的字幕轨也去要了', posted.some((p) => p.type === 'fetchTrack'),
+          JSON.stringify(posted.map((p) => p.type)));
   }
 
   console.log('\n结果：' + pass + ' 通过 / ' + fail + ' 失败');

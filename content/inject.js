@@ -102,10 +102,16 @@
       if (withAudio) audioLang = String(withAudio.audioTrack.id).split('.')[0];
     } catch (_) {}
 
+    /* isLive 和 isLiveContent 是两回事：后者对「曾经是直播」的录播也为真，而录播
+     * 有字幕、能翻、也该翻。挡的是正在直播的那种 —— 它的字幕轨要么没有，要么是
+     * 一边生成一边推的，我们这套「整轨拉下来切句」的做法根本对不上。
+     * isUpcoming 是还没开始的首播，同样没有轨可拉。 */
     return {
       videoId: vd.videoId || new URLSearchParams(location.search).get('v') || '',
       title: vd.title || '',
-      isLive: !!vd.isLiveContent,
+      isLive: !!(vd.isLive || vd.isLiveNow),
+      isUpcoming: !!vd.isUpcoming,
+      isLiveContent: !!vd.isLiveContent,
       audioLang,
       tracks
     };

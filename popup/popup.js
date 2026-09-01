@@ -4,6 +4,7 @@ import { DEFAULTS, getSettings, setSettings, CODE_TO_NAME as LANG_NAMES,
 const $ = (id) => document.getElementById(id);
 let S = Object.assign({}, DEFAULTS);
 let tabId = null;
+let tabUrl = '';
 let P = { active: '', list: [] };   // 存了哪几套接口配置
 
 const STATUS_TEXT = {
@@ -12,7 +13,16 @@ const STATUS_TEXT = {
   ready: '字幕已就绪',
   translating: '正在翻译…',
   error: '出错了',
-  nosub: '这个视频没有英文字幕'
+  nosub: '这个视频没有可用的字幕轨'
+};
+
+/* 说不出原因的等待，比直说「这儿不支持」糟得多 —— 用户会一直以为是自己哪儿没弄对，
+   然后反复刷新一个刷新多少次也不会好的页面。 */
+const UNSUPPORTED_TEXT = {
+  live: '正在直播的视频暂不支持',
+  upcoming: '首播还没开始',
+  shorts: 'Shorts 暂不支持',
+  'no-player': '这个页面上没有播放器'
 };
 
 const HINTS = {
@@ -192,12 +202,21 @@ function bind() {
    「页面未就绪，刷新一下试试」—— 催用户去刷新一个刷新多少次也不会好的页面。 */
 async function connectTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab && tab.url && /^https:\/\/www\.youtube\.com\//.test(tab.url)) tabId = tab.id;
+  tabUrl = (tab && tab.url) || '';
+  if (/^https:\/\/www\.youtube\.com\//.test(tabUrl)) tabId = tab.id;
+}
+
+/* 没有 content script 的页面各有各的原因，说清楚是哪一种。
+   一律写「当前不是 YouTube 页面」的话，人在 music.youtube.com 上会以为插件坏了。 */
+function offsiteText() {
+  if (/youtube-nocookie\.com\//.test(tabUrl)) return '嵌入播放器暂不支持，在 YouTube 上打开这个视频';
+  if (/^https:\/\/(m|music|studio)\.youtube\.com\//.test(tabUrl)) return '只支持 www.youtube.com 上的视频页';
+  return '当前不是 YouTube 页面';
 }
 
 async function refreshStatus() {
   if (!tabId) {
-    $('statusText').textContent = '当前不是 YouTube 页面';
+    $('statusText').textContent = offsiteText();
     $('dot').removeAttribute('data-s');
     return;
   }
@@ -205,6 +224,19 @@ async function refreshStatus() {
   try { r = await chrome.tabs.sendMessage(tabId, { type: 'getStatus' }); } catch (_) {}
   if (!r) {
     $('statusText').textContent = '页面未就绪，刷新一下试试';
+    return;
+  }
+
+  /* 不支持的页面压过一切：直播翻不了，再显示「正在获取字幕…」就是在骗人 */
+  if (r.unsupported) {
+    $('statusText').textContent = UNSUPPORTED_TEXT[r.unsupported] || '这个页面暂不支持';
+    $('dot').removeAttribute('data-s');
+    $('videoTitle').textContent = r.title || '';
+    $('srcText').classList.add('hidden');
+    $('barFill').style.width = '0%';
+    $('errText').classList.add('hidden');
+    $('retryBtn').classList.add('hidden');
+    $('purgeBtn').classList.add('hidden');
     return;
   }
 
