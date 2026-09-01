@@ -16,6 +16,12 @@
     </label>
   </header>
 
+  <!-- 还没配接口时的第一件事：这插件不填东西根本用不了，别让人等到第一批翻译失败才知道 -->
+  <section class="setup hidden" id="setupBar">
+    <span class="setupText">还没配置接口，先填 API 地址和 Key</span>
+    <button class="setupBtn" id="setupBtn" type="button">去设置</button>
+  </section>
+
   <section class="status" id="statusCard">
     <div class="row">
       <span class="dot" id="dot"></span>
@@ -68,7 +74,10 @@
 
   <footer class="foot">
     <span class="usage" id="usage">—</span>
-    <button class="link" id="openOptions">设置</button>
+    <span class="footRight">
+      <button class="link" id="copyDiag" title="把最近的状态、错误和请求摘要复制下来，报障时贴出来（不含 API Key）">复制诊断</button>
+      <button class="link" id="openOptions">设置</button>
+    </span>
   </footer>
 
   <script src="popup.js" type="module"></script>

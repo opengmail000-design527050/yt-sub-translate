@@ -35,7 +35,7 @@ function load(settings, reply) {
     hasApiPermission: async () => true,
     setTimeout, clearTimeout, AbortController, URL,
     chrome: {
-      runtime: { onMessage: { addListener() {} } },
+      runtime: { onMessage: { addListener() {} }, onInstalled: { addListener() {} } },
       commands: { onCommand: { addListener() {} } },
       tabs: { query: async () => [] },
       storage: { local: {

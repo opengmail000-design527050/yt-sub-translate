@@ -71,6 +71,13 @@ function paintSettings() {
   setSeg('reasoning', S.reasoning);
   $('reasonHint').textContent = HINTS[S.reasoning] || '';
   paintModel();
+  paintSetup();
+}
+
+/* 这插件不填接口根本用不了。没有这一条的话，用户要等到打开视频、第一批翻译失败，
+   才在错误里看到「还没填 API Key」—— 那已经晚了一步，而且看起来像插件坏了。 */
+function paintSetup() {
+  $('setupBar').classList.toggle('hidden', !!String(S.apiKey || '').trim());
 }
 
 /* 推理三档是对着某一个模型选的 —— 同样的「关闭」，换个模型可能就关不掉了。
@@ -136,6 +143,7 @@ async function switchProfile(id) {
   P = await saveProfiles({ active: id, list: P.list });
   await save(pickProfile(p));
   paintModel();
+  paintSetup();          // 换到一档没填 Key 的，横幅得回来
   toast(`已切换到「${p.name}」`);
 }
 
@@ -216,6 +224,8 @@ function bind() {
 
   // 「去设置」「去授权」都落在同一个地方：那两件事都在设置页做
   $('fixBtn').addEventListener('click', () => chrome.runtime.openOptionsPage());
+  $('setupBtn').addEventListener('click', () => chrome.runtime.openOptionsPage());
+  $('copyDiag').addEventListener('click', copyDiagnostics);
 
   $('openOptions').addEventListener('click', () => chrome.runtime.openOptionsPage());
 }
@@ -364,6 +374,78 @@ function paintSource(r) {
 
   el.textContent = parts.join('　·　');
   el.classList.toggle('hidden', !parts.length);
+}
+
+/* ------------------------------------------------------------------ *
+ * 诊断信息
+ *
+ * 别人机器上的问题只能靠这个查：状态迁移、要了哪条轨、每批的结果、每次请求的
+ * 耗时和错误码，加上一份「当前是怎么配的」。
+ *
+ * 里面绝不能有 API Key —— 用户会把这段话贴到聊天群、贴到 issue 里。地址只留主机名
+ * （路径上偶尔挂着令牌），原文和译文一个字都不带（那是他正在看的内容）。
+ * ------------------------------------------------------------------ */
+function hostOf(u) {
+  try { return new URL(String(u)).host; } catch (_) { return String(u || '').slice(0, 40); }
+}
+
+function safeUA() {
+  try { return navigator.userAgent; } catch (_) { return '未知'; }
+}
+
+function version() {
+  try { return chrome.runtime.getManifest().version; } catch (_) { return '?'; }
+}
+
+async function collectDiagnostics() {
+  const out = ['Sub Translator ' + version(), 'UA: ' + safeUA()];
+  out.push('配置: 模型=' + (S.model || '空') +
+           ' 接口=' + hostOf(S.baseUrl) +
+           ' Key=' + (String(S.apiKey || '').trim() ? '已填' : '空') +
+           ' 目标语言=' + S.targetLang +
+           ' 推理=' + S.reasoning + '/' + S.reasoningStyle);
+  out.push('参数: 并发=' + S.concurrency + ' 批次=' + S.batchLines + '行/' + S.batchChars + '字' +
+           ' 长度档=' + S.density + ' 缓存=' + (S.useCache ? '开' : '关') +
+           ' 上下文=' + (S.useContext ? '开' : '关'));
+
+  let bg = null;
+  try { bg = await chrome.runtime.sendMessage({ type: 'getLog' }); } catch (_) {}
+  let page = null;
+  if (tabId) { try { page = await chrome.tabs.sendMessage(tabId, { type: 'getLog' }); } catch (_) {} }
+
+  if (page) {
+    out.push('', '--- 页面 ---',
+             '视频=' + (page.videoId || '无') + ' 状态=' + page.status +
+             (page.unsupported ? '(' + page.unsupported + ')' : '') +
+             ' 句子=' + page.translated + '/' + page.segments + ' 放弃=' + page.dropped,
+             '字幕轨=' + (page.trackSig || '无') + ' 源语言=' + (page.sourceLang || '?') +
+             ' 自带译文=' + (page.adopt || '无') + ' 批次档=' + page.tier,
+             '批次状态串=' + (page.batches || ''),
+             (page.capsMissing && page.capsMissing.length ? '自检缺少=' + page.capsMissing.join(',') : '自检正常'),
+             ...(page.lines || []));
+  } else {
+    out.push('', '--- 页面 ---', '（这个标签页上没有内容脚本，或者页面还没就绪）');
+  }
+
+  if (bg) {
+    out.push('', '--- 后台 ---', '在途请求=' + bg.inflight +
+             (bg.cooling && bg.cooling.length ? ' 冷却中: ' + bg.cooling.join(' / ') : ''),
+             ...(bg.lines || []));
+  }
+  return out.join('\n');
+}
+
+async function copyDiagnostics() {
+  let text = '';
+  try { text = await collectDiagnostics(); } catch (e) { text = '收集诊断信息时出错：' + e; }
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('诊断信息已复制（不含 Key）');
+  } catch (_) {
+    // 剪贴板被策略挡住时，至少让用户能从控制台里拿走
+    try { console.log(text); } catch (_) {}
+    toast('复制失败，已打印到控制台');
+  }
 }
 
 async function refreshUsage() {

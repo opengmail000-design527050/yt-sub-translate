@@ -17,7 +17,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   /* 内容脚本那边 epoch 一涨（切视频、换字幕轨、改了影响译文的设置），
    * 旧的批次就已经不作数了 —— 这里要真的把 fetch 掐掉，不能只是不采用结果。 */
   if (msg.type === 'cancel') {
-    sendResponse({ ok: true, aborted: cancelJobs(tabId, msg.payload || {}) });
+    const n = cancelJobs(tabId, msg.payload || {});
+    if (n) log('取消了 ' + n + ' 个在途请求');
+    sendResponse({ ok: true, aborted: n });
+    return true;
+  }
+
+  if (msg.type === 'getLog') {
+    sendResponse({
+      ok: true,
+      inflight: inflight.size,
+      cooling: [...cooldowns.entries()].map(([k, v]) => k + ' 还有 ' + Math.max(0, v.until - Date.now()) + 'ms'),
+      lines: logs.slice()
+    });
     return true;
   }
 
@@ -37,6 +49,33 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 });
+
+/* 第一次安装就把设置页打开。
+ *
+ * 没有这一步的话，装完什么都不会发生：打开视频、等一会儿、第一批翻译失败，才在弹窗
+ * 里看到「还没填 API Key」—— 而这是一个必须先填东西才能用的插件，第一件事就该是
+ * 告诉用户去填。升级不打扰（reason 是 update 时什么都不做）。 */
+chrome.runtime.onInstalled.addListener((d) => {
+  if (!d || d.reason !== 'install') return;
+  try { chrome.runtime.openOptionsPage(); } catch (_) {}
+});
+
+/* ------------------------------------------------------------------ *
+ * 诊断日志
+ *
+ * 200 条环形缓冲：每次请求的摘要、限流、取消。跟内容脚本那份合起来，用户点一下
+ * 「复制诊断信息」就能贴出一条完整的时间线 —— 没有它，别人机器上的问题只能靠猜。
+ * 不落盘、不上报，service worker 一被回收就没了。
+ * 只记「发生了什么」，不记 Key、不记原文和译文。
+ * ------------------------------------------------------------------ */
+const LOG_MAX = 200;
+const logs = [];
+const logT0 = Date.now();
+
+function log(msg) {
+  logs.push(((Date.now() - logT0) / 1000).toFixed(1) + 's ' + msg);
+  if (logs.length > LOG_MAX) logs.shift();
+}
 
 /* 快捷键：Alt+Shift+T */
 chrome.commands.onCommand.addListener(async (cmd) => {
@@ -607,9 +646,13 @@ async function askModel(s, items, ref, mode, sourceLang, noPunct, title, job) {
   }
 
   let data;
+  const t0 = Date.now();
   try {
     data = await postJson(joinUrl(s.baseUrl), s.apiKey, body, 90000, 1, job);
+    log((mode || '翻译') + ' ' + items.length + ' 行 · ' + (Date.now() - t0) + 'ms · 成功');
   } catch (e) {
+    log((mode || '翻译') + ' ' + items.length + ' 行 · ' + (Date.now() - t0) + 'ms · 失败 [' +
+        ((e && e.code) || 'network') + '] ' + errText(e).slice(0, 120));
     // retryAfter 一路带回前端：限流不该变成一条要人去点的红字，等一会儿自己重来就好
     return {
       map: {}, usage: null,
@@ -695,6 +738,7 @@ function rateHit(url, retryAfter) {
   const c = cooldowns.get(k) || { until: 0, step: 0 };
   const ladder = Math.min(RATE_CAP, RATE_BASE * Math.pow(2, c.step));
   const wait = Math.min(RATE_CAP, retryAfter > 0 ? retryAfter : ladder);
+  log('限流 429，冷却 ' + wait + 'ms' + (retryAfter > 0 ? '（服务商指定）' : '（第 ' + (c.step + 1) + ' 级台阶）'));
   c.step = Math.min(c.step + 1, 4);
   c.until = Date.now() + wait;
   cooldowns.set(k, c);

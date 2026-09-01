@@ -88,6 +88,7 @@ const chrome = {
 const timeout = (f, ms) => { const t = setTimeout(f, ms); if (t.unref) t.unref(); return t; };
 
 const sandbox = { console, document: doc, chrome, setTimeout: timeout, clearTimeout,
+                  navigator: { userAgent: 'Chrome/测试', clipboard: { async writeText() {} } },
                   setInterval: () => 0, clearInterval: () => {}, URL, Math, Date, JSON };
 sandbox.window = sandbox;
 const ctx = vm.createContext(sandbox);
@@ -313,6 +314,41 @@ const itemText = (b) => b._kids.map((k) => k.textContent).join(' · ') || b.text
   check('嵌入页说的是「在 YouTube 上打开」，不是「不是 YouTube 页面」',
         $('statusText').textContent.includes('嵌入'), $('statusText').textContent);
   tabUrl = 'https://www.youtube.com/watch?v=abc';
+
+  /* ---------------------------------------------------------------- *
+   * [11] 没配 Key 时的引导 + 诊断信息
+   * ---------------------------------------------------------------- */
+  console.log('\n[11] 引导与诊断');
+  {
+    statusReply = null;
+    storage.settings = Object.assign({}, storage.settings, { apiKey: '' });
+    delete storage.profiles;
+    await freshPopup();
+    await sleep(10);
+    check('没填 Key 时横幅出来了', !$('setupBar').classList.contains('hidden'));
+    const opened = optionsOpened;
+    fire($('setupBtn'), 'click');
+    check('点横幅就去设置页', optionsOpened > opened);
+
+    storage.settings = Object.assign({}, storage.settings, { apiKey: 'sk-secret-value-123' });
+    delete storage.profiles;
+    await freshPopup();
+    await sleep(10);
+    check('填了就不再挡在最上面', $('setupBar').classList.contains('hidden'));
+
+    /* 诊断信息会被贴到聊天群和 issue 里，绝不能带 Key。 */
+    statusReply = { onYoutube: true, active: true, status: 'ready', segments: 8, translated: 8 };
+    let copied = '';
+    sandbox.navigator = { userAgent: 'Chrome/测试', clipboard: { writeText: async (t) => { copied = t; } } };
+    fire($('copyDiag'), 'click');
+    await sleep(30);
+    check('复制出了东西', copied.length > 0, String(copied.length));
+    check('一个字都没有 Key', !copied.includes('sk-secret-value-123'), copied.slice(0, 200));
+    check('只写「已填」', copied.includes('Key=已填'), copied.split('\n')[2]);
+    check('带上了版本和配置', copied.includes('Sub Translator') && copied.includes('模型='),
+          copied.slice(0, 120));
+    check('接口只留主机名', !copied.includes('/v1'), copied.slice(0, 200));
+  }
 
   console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
   process.exit(fail ? 1 : 0);

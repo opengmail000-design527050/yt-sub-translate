@@ -43,7 +43,7 @@ function load(plan) {
     clearTimeout,
     Date: { now: () => clock, parse: Date.parse },
     chrome: {
-      runtime: { onMessage: { addListener() {} } },
+      runtime: { onMessage: { addListener() {} }, onInstalled: { addListener() {} } },
       commands: { onCommand: { addListener() {} } },
       tabs: { query: async () => [], onRemoved: { addListener() {} } },
       storage: { local: {

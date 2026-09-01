@@ -24,7 +24,7 @@ const ctx = {
   hasApiPermission: async () => true, setTimeout, clearTimeout, AbortController, URL,
   fetch: async () => { throw new Error('no net'); },
   chrome: {
-    runtime: { onMessage: { addListener() {} } },
+    runtime: { onMessage: { addListener() {} }, onInstalled: { addListener() {} } },
     commands: { onCommand: { addListener() {} } },
     tabs: { query: async () => [] },
     storage: { local: { get: async () => ({}), set: async () => {}, remove: async () => {} } }
