@@ -237,6 +237,7 @@ async function translateBatch(payload, tabId) {
     totals: { prompt_tokens: 0, completion_tokens: 0, cached_tokens: 0, cached_reports: 0 },
     error: '',
     repaired: 0,
+    retryAfter: 0,  // 撞上限流时「还要等多久」，前端据此自动回到队列，不必人去点重试
     split: 0        // 因为错位而对半重来的次数，前端拿它判断批次是不是给大了
   };
 
@@ -272,7 +273,15 @@ async function translateBatch(payload, tabId) {
 
   // 一行都没翻出来：当成整批失败，前端才会给重试入口
   // split 也要带上：前端靠它区分「批次太大导致错位」和「网络/鉴权失败」
-  if (!r.out.size) return { ok: false, error: ctx.error || '模型没有返回可用的译文', usage, split: ctx.split };
+  if (!r.out.size) {
+    return {
+      ok: false,
+      error: ctx.error || '模型没有返回可用的译文',
+      usage,
+      split: ctx.split,
+      retryAfter: ctx.retryAfter || 0
+    };
+  }
 
   const map = {};
   for (const [id, t] of r.out) map[String(id)] = t;
@@ -283,7 +292,8 @@ async function translateBatch(payload, tabId) {
     usage,
     dropped: r.missing.map((m) => m.id),   // 到底也没翻出来的，前端只显示原文
     repaired: ctx.repaired,
-    split: ctx.split
+    split: ctx.split,
+    retryAfter: ctx.retryAfter || 0
   };
 }
 
@@ -323,6 +333,7 @@ async function translateChunk(ctx, items, depth, prev, next) {
 
   let r = await askModel(ctx.s, numbered, { prev, next }, '', ctx.sourceLang, ctx.noPunct, ctx.title, ctx.job);
   bumpUsage(ctx.totals, r.usage);
+  noteRetryAfter(ctx, r);
   let out = r.error ? new Map() : collect(r.map);
 
   /* 一行都没认出来，而且这次请求本身是成功的 —— 那就是模型没按 "<n>|译文" 回。
@@ -334,6 +345,7 @@ async function translateChunk(ctx, items, depth, prev, next) {
   if (!r.error && !out.size && !stopped(ctx)) {
     const again = await askModel(ctx.s, numbered, { prev, next }, 'strict', ctx.sourceLang, ctx.noPunct, ctx.title, ctx.job);
     bumpUsage(ctx.totals, again.usage);
+    noteRetryAfter(ctx, again);
     if (!again.error) { r = again; out = collect(again.map); }
   }
 
@@ -375,6 +387,7 @@ async function translateChunk(ctx, items, depth, prev, next) {
   const fixItems = missing.map((m, i) => ({ n: i + 1, id: m.id, text: m.text }));
   const fix = await askModel(ctx.s, fixItems, null, 'repair', ctx.sourceLang, ctx.noPunct, ctx.title, ctx.job);
   bumpUsage(ctx.totals, fix.usage);
+  noteRetryAfter(ctx, fix);
   if (!fix.error) {
     // 补翻也可能合并。只有整整齐齐补全了才敢用，缺一行就整份不要
     const all = fixItems.every((it) => String(fix.map[it.n] || '').trim());
@@ -387,6 +400,13 @@ async function translateChunk(ctx, items, depth, prev, next) {
     }
   }
   return { out, missing: missing.map((m) => ({ id: m.id, text: m.text })) };
+}
+
+/* 这一批里只要有一跳撞上了限流，就把「还要等多久」记下来（取最长的那个）。
+ * 拆块之后一批会发好几次请求，报最长的那个才不会让前端太早回来又撞一次。 */
+function noteRetryAfter(ctx, r) {
+  const ms = Number((r && r.retryAfter) || 0);
+  if (ms > 0) ctx.retryAfter = Math.max(Number(ctx.retryAfter) || 0, ms);
 }
 
 function bumpUsage(totals, u) {
@@ -556,7 +576,8 @@ async function askModel(s, items, ref, mode, sourceLang, noPunct, title, job) {
   try {
     data = await postJson(joinUrl(s.baseUrl), s.apiKey, body, 90000, 1, job);
   } catch (e) {
-    return { map: {}, usage: null, error: errText(e) };
+    // retryAfter 一路带回前端：限流不该变成一条要人去点的红字，等一会儿自己重来就好
+    return { map: {}, usage: null, error: errText(e), retryAfter: (e && e.retryAfter) || 0 };
   }
 
   const content =
@@ -597,10 +618,77 @@ function parseLines(content, items) {
   return map;
 }
 
+/* ------------------------------------------------------------------ *
+ * 限流退避
+ *
+ * 服务商的配额是按分钟算的，而我们默认并发 3。原来的做法是每个批次各自睡 1.2 秒
+ * 再撞一次，第二次多半还是 429 —— 于是三批一起变成「翻译出错」，字幕框写着
+ * 「翻译出错」，要用户去弹窗点重试。这套节奏基本必败，而且失败的时机往往是
+ * 用户刚打开一个视频、三批同时发出去的那一下。
+ *
+ * 改成按接口地址记一个「冷却到期时刻」：谁撞上 429 谁把它推后，冷却期内的批次
+ * 先排队等着，不再各自去撞。等多久优先听服务商的 Retry-After，没给就 2 / 4 / 8
+ * 秒指数退避，封顶 30 秒。冷却过完还没再撞上，台阶清零。
+ *
+ * 这份状态活在 service worker 里，被回收就没了 —— 那没关系：回收意味着一段时间
+ * 没有请求，限流窗口本来也就过去了。
+ * ------------------------------------------------------------------ */
+const RATE_CAP = 30000;        // 一次最多等这么久
+const RATE_BASE = 2000;        // 没有 Retry-After 时的第一级台阶
+const RATE_RETRY_IN_REQUEST = 1;   // 同一次请求里最多为限流重来几次，之后交给前端排队
+
+const cooldowns = new Map();   // 接口地址 -> { until, step }
+
+const rateKey = (url) => { try { return new URL(url).origin; } catch (_) { return String(url || ''); } };
+
+/** 现在去撞的话得先等多久（毫秒）。0 = 可以直接发。 */
+function rateWait(url) {
+  const c = cooldowns.get(rateKey(url));
+  return c ? Math.max(0, c.until - Date.now()) : 0;
+}
+
+/** 撞上 429 了：推后冷却，返回这次该等多久。 */
+function rateHit(url, retryAfter) {
+  const k = rateKey(url);
+  const c = cooldowns.get(k) || { until: 0, step: 0 };
+  const ladder = Math.min(RATE_CAP, RATE_BASE * Math.pow(2, c.step));
+  const wait = Math.min(RATE_CAP, retryAfter > 0 ? retryAfter : ladder);
+  c.step = Math.min(c.step + 1, 4);
+  c.until = Date.now() + wait;
+  cooldowns.set(k, c);
+  return wait;
+}
+
+/** 一次没撞上：冷却期已经过完的话就把台阶收掉，下次限流从头数起。 */
+function rateClear(url) {
+  const k = rateKey(url);
+  const c = cooldowns.get(k);
+  if (c && c.until <= Date.now()) cooldowns.delete(k);
+}
+
+/** Retry-After 可以是秒数，也可以是一个 HTTP 日期。取不到返回 0。 */
+function retryAfterMs(res) {
+  let v = '';
+  try { v = (res && res.headers && res.headers.get && res.headers.get('Retry-After')) || ''; } catch (_) {}
+  if (!v) return 0;
+  const n = Number(v);
+  if (Number.isFinite(n) && n >= 0) return Math.min(RATE_CAP, n * 1000);
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? Math.min(RATE_CAP, Math.max(0, t - Date.now())) : 0;
+}
+
 async function postJson(url, key, body, timeoutMs, retries, job) {
   let lastErr = null;
+  let rateTries = 0;
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (job && job.cancelled) throw cancelError();
+    /* 冷却期内：排队等着，别去撞。这是「全局」退避的全部含义 —— 一个批次撞上了，
+     * 另外两个并发批次就不必再各自撞一次。 */
+    const queued = rateWait(url);
+    if (queued > 0) {
+      await sleep(queued);
+      if (job && job.cancelled) throw cancelError();
+    }
     const ctrl = new AbortController();
     // 登记进这一批的名下，切视频时 cancelJobs 才拽得住它
     if (job) job.ctrls.add(ctrl);
@@ -634,12 +722,23 @@ async function postJson(url, key, body, timeoutMs, retries, job) {
          *
          * 不重试的要打上 noRetry —— 这个 throw 在 try 块里，会被下面那个 catch
          * 一并接住，不打标记的话它照样睡一秒再发一遍。 */
-        const transient = res.status === 408 || res.status === 425
-                       || res.status === 429 || res.status >= 500;
+        /* 429 单独走退避：读 Retry-After，没有就按台阶退。同一次请求里只为它重来
+         * 一次，再撞就把「还要等多久」报给前端 —— 让那一批回到队列里等冷却过去，
+         * 比在这儿抱着一个请求干等几十秒好（service worker 说不定就被回收了）。 */
+        if (res.status === 429) {
+          const wait = rateHit(url, retryAfterMs(res));
+          if (rateTries++ < RATE_RETRY_IN_REQUEST) { lastErr = err; continue; }
+          err.retryAfter = Math.max(wait, rateWait(url));
+          err.rate = true;
+          err.noRetry = true;
+          throw err;
+        }
+        const transient = res.status === 408 || res.status === 425 || res.status >= 500;
         if (transient) { lastErr = err; await sleep(1200 * (attempt + 1)); continue; }
         err.noRetry = true;
         throw err;
       }
+      rateClear(url);      // 这一发过去了，冷却过完就把台阶收掉
       return JSON.parse(text);
     } catch (e) {
       done();

@@ -512,7 +512,7 @@
       count += 1;
       const last = i === segments.length - 1;
       if (last || chars >= lim.chars || count >= lim.lines) {
-        batches.push({ from: start, to: i, state: 'idle' });
+        batches.push({ from: start, to: i, state: 'idle', tries: 0 });
         start = i + 1; chars = 0; count = 0;
       }
     }
@@ -989,6 +989,11 @@
       st.error = (res && res.error) || '翻译失败';
       // 整批失败：只有拆到底还在错位才算批次太大，401/超时之类不算
       noteBatchResult(Number((res && res.split) || 0) > 0, false);
+      /* 限流：background 已经在排队了，这一批自己回来，别让用户去点重试 */
+      const wait = Number((res && res.retryAfter) || 0);
+      if (autoRetry(b, epoch, wait)) {
+        st.error = '接口限流，' + Math.max(1, Math.round(wait / 1000)) + ' 秒后自动重试';
+      }
     }
 
     render();
@@ -996,8 +1001,29 @@
     schedule();
   }
 
+  /* 限流不该变成一条要用户去点的红字。
+   *
+   * 服务商的配额按分钟算，429 之后等一会儿再来基本就好了 —— background 已经按
+   * 接口地址排了队并把「还要等多久」报了回来，这里让那一批自己回到队列里，人什么
+   * 都不用做。只在真等得起的时候这么干：次数封顶，免得一个坏掉的接口把电池耗干。 */
+  const AUTO_RETRY_MAX = 5;
+
+  function autoRetry(b, epoch, waitMs) {
+    if (!(waitMs > 0) || (b.tries || 0) >= AUTO_RETRY_MAX) return false;
+    b.tries = (b.tries || 0) + 1;
+    setTimeout(() => {
+      if (epoch !== st.epoch || b.state !== 'err') return;
+      b.state = 'idle';
+      // 别的批次还在错着的话，错误信息得留着
+      if (!st.batches.some((x) => x.state === 'err')) st.error = '';
+      schedule();
+      updateStatus();
+    }, Math.max(1000, waitMs));
+    return true;
+  }
+
   function retryErrors() {
-    for (const b of st.batches) if (b.state === 'err') b.state = 'idle';
+    for (const b of st.batches) if (b.state === 'err') { b.state = 'idle'; b.tries = 0; }
 
     // 补翻后仍然缺译文的行所在的批次，也再给一次机会
     if (st.dropped.size) {

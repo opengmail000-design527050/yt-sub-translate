@@ -138,6 +138,7 @@ const cleanReply = async (m) => {
 };
 
 const sizes = () => sent.filter((m) => m.type === 'translateBatch').map((m) => m.payload.lines.length);
+const ask = () => new Promise((res) => chrome.runtime.onMessage._l.forEach((f) => f({ type: 'getStatus' }, {}, res)));
 
 async function feed(videoId, n) {
   toPage('player', { videoId, title: videoId, audioLang: 'en', tracks: [{ languageCode: 'en', kind: 'asr' }] });
@@ -267,6 +268,48 @@ async function feed(videoId, n) {
   await sleep(1600);
   const after = sizes().length;
   check('停稳之后照常翻当前位置', after > 0, '发了 ' + after + ' 个');
+
+  console.log('\n[5] 限流：带退避时间的失败自己回到队列，不用人点重试');
+  {
+    /* 服务商的配额按分钟算。以前 429 之后这一批就是 err，字幕框写「翻译出错」，
+       要用户去弹窗点重试 —— 而他什么也做不了，只能等。现在 background 把「还要等
+       多久」报回来，这一批自己回来。桩里的计时器按 1/50 压缩，2 秒退避 = 40 毫秒。 */
+    let limited = 0;
+    runtimeReply = async (m) => {
+      if (m.type !== 'translateBatch') return { ok: true };
+      // 前两批撞上限流，之后恢复正常
+      if (limited < 2) { limited++; return { ok: false, error: 'HTTP 429: 慢一点', retryAfter: 2000 }; }
+      return cleanReply(m);
+    };
+    sent.length = 0;
+    await feed('B5', 60);
+    const st1 = await ask();
+    check('撞上限流时说的是「稍后自动重试」，不是干巴巴一句出错',
+          /自动重试/.test(st1.error || '') || st1.translated === st1.segments,
+          JSON.stringify({ error: st1.error, translated: st1.translated }));
+
+    await sleep(600);
+    const st2 = await ask();
+    check('没有人点任何按钮，字幕自己补齐了', st2.translated === st2.segments,
+          JSON.stringify({ translated: st2.translated, segments: st2.segments }));
+    check('确实为此重发过', sizes().length > 2, '共发了 ' + sizes().length + ' 批');
+    check('最后没有留下错误', !st2.error, String(st2.error));
+  }
+
+  console.log('\n[6] 一直限流也不会没完没了地重试');
+  {
+    runtimeReply = async (m) => (m.type === 'translateBatch'
+      ? { ok: false, error: 'HTTP 429: 慢一点', retryAfter: 2000 }
+      : { ok: true });
+    sent.length = 0;
+    await feed('B6', 40);
+    await sleep(1200);
+    const n = sizes().length;
+    check('次数有封顶（不会把电池耗干）', n > 1 && n <= 20, '共发了 ' + n + ' 批');
+    const stx = await ask();
+    check('最后老老实实报错，用户还能自己点重试', stx.status === 'error' && !!stx.error,
+          JSON.stringify(stx));
+  }
 
   console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
   process.exit(fail ? 1 : 0);
