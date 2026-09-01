@@ -48,6 +48,12 @@ const chrome = {
       if (m && m.type === 'cancel') return { ok: true, aborted: 0 };
       /* 缓存正文的写入现在是「发增量给 background，由它合并」。桩在这里当一回
          background：把增量并进 storage —— 不然任何跟缓存有关的断言都无从谈起。 */
+      /* forget 现在也由 background 负责删正文（要跟写入排同一条队列，
+         不然重翻的删除会被在途的落盘写回来）。桩照做。 */
+      if (m && m.type === 'cacheIndex' && m.payload && m.payload.op === 'forget') {
+        delete storage[m.payload.key];
+        return { ok: true, removed: 0 };
+      }
       if (m && m.type === 'cacheWrite') {
         const p = m.payload || {};
         const cur = (storage[p.key] && storage[p.key].items) ? storage[p.key] : { items: {} };
@@ -537,10 +543,13 @@ const check = (name, cond, extra) => {
 
     sent.length = 0;
     await new Promise((res) => chrome.runtime.onMessage._l.forEach((f) => f({ type: 'purgeCache' }, {}, res)));
+    /* 当场看一眼。再往后就分不清了 —— 重翻本来就会立刻按新译文重新写一份缓存，
+       那份是对的，不该被当成「没删掉」。 */
+    const goneNow = !cacheKeys().some((k) => k.includes('IDX'));
     await sleep(60);
     check('重翻本视频是让 background 把这条索引忘掉', ops().some((o) => o.op === 'forget'),
           JSON.stringify(ops()));
-    check('重翻仍然直接删掉了缓存正文', !cacheKeys().some((k) => k.includes('IDX')), JSON.stringify(cacheKeys()));
+    check('缓存正文当场也一并没了', goneNow, JSON.stringify(cacheKeys()));
   }
 
   console.log('\n[20] 兜底开过的原生字幕要还回去');

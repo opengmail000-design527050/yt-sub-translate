@@ -809,8 +809,15 @@ async function runCacheOp(p) {
 
   const got = await chrome.storage.local.get('cacheIndex');
   const idx = got.cacheIndex || {};
-  if (p.op === 'forget') delete idx[key];
-  else idx[key] = Date.now();
+  if (p.op === 'forget') {
+    /* 正文也在这里删，而不是让内容脚本自己去 remove。
+     * 它得跟写入排在同一条队列上：不然「重翻本视频」按下去的时候，正好有一笔
+     * 落盘还在路上，删完它又把整份写了回来 —— 用户点了重翻，缓存却还在。 */
+    delete idx[key];
+    await chrome.storage.local.remove(key);
+  } else {
+    idx[key] = Date.now();
+  }
 
   const drop = p.prune ? staleKeys(idx, p.prune) : [];
   for (const k of drop) delete idx[k];

@@ -202,6 +202,18 @@ const DAY = 86400000;
     check('没过期的没被误伤', !!store.c_keep, JSON.stringify(Object.keys(store)));
   }
 
+  console.log('\n[13] forget 要把索引和正文一起忘掉');
+  {
+    /* 「重翻本视频」按下去时，很可能正好有一笔落盘还在路上。删除得跟写入排在同一条
+       队列上，不然删完又被写回来 —— 用户点了重翻，缓存却还在。 */
+    const { api, store } = load({ cacheIndex: { c_v: 1 }, c_v: { items: { a: '甲' } } });
+    const write = api.cacheIndexOp({ op: 'write', key: 'c_v', items: { b: '乙' } });
+    const forget = api.cacheIndexOp({ op: 'forget', key: 'c_v' });
+    await Promise.all([write, forget]);
+    check('正文没了', store.c_v === undefined, JSON.stringify(store.c_v));
+    check('索引里也没了', !(store.cacheIndex && store.cacheIndex.c_v), JSON.stringify(store.cacheIndex));
+  }
+
   console.log('\n结果：' + pass + ' 通过 / ' + fail + ' 失败');
   process.exit(fail ? 1 : 0);
 })();

@@ -661,7 +661,10 @@
     }
   }
 
-  const saveCache = debounce(flushCache, 4000);
+  /* 防抖从 4 秒降到 1.5 秒。以前的算盘是「攒着一起写，省 storage 写入」，可代价是
+   * 关页面前最后几秒买到的译文常常还没落盘 —— 那是已经付过钱的东西。现在正文写入
+   * 只送增量、合并在 background 做，写一次的开销小得多，没有理由再攒那么久。 */
+  const saveCache = debounce(flushCache, 1500);
 
   function cacheGet(text) {
     if (!S.useCache || !st.cache) return null;
@@ -1083,11 +1086,8 @@
     st.curIdx = -1;
     st.settleAt = 0;
     if (st.videoId) {
-      try {
-        const k = cacheKey(st.videoId);
-        await chrome.storage.local.remove(k);
-        await cacheIndexOp('forget', k);
-      } catch (_) {}
+      // 正文和索引一起交给 background 那条队列去删，才不会被在途的落盘写回来
+      try { await cacheIndexOp('forget', cacheKey(st.videoId)); } catch (_) {}
     }
     render();
     updateStatus();
@@ -2062,7 +2062,14 @@
     applySettings(changes.settings.newValue);
   });
 
+  /* 落盘的时机不能只有 beforeunload：手机端和后台标签页常常等不到它就被丢掉，
+   * 而 pagehide / 页面转入后台是浏览器保证会给的最后一程。三个都挂上，flushCache
+   * 自己会看 cacheDirty，重复触发不会重复写。 */
   window.addEventListener('beforeunload', saveCacheNow);
+  window.addEventListener('pagehide', saveCacheNow);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') saveCacheNow();
+  });
 
   // 测试用出口：只有测试桩会预先把这个键设成对象，页面里永远是 undefined
   if (window.__YTST_TEST__) Object.assign(window.__YTST_TEST__,
