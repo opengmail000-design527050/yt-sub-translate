@@ -72,7 +72,7 @@ export default [
   {
     /* 端到端测试里有几段是丢进浏览器里跑的（page.evaluate 的回调），
        那里面的 document / window / chrome 是页面的，不是 node 的。 */
-    files: ['test/e2e/**/*.mjs'],
+    files: ['test/e2e/**/*.mjs', 'tools/shots.mjs'],
     languageOptions: {
       globals: { document: 'readonly', window: 'readonly', chrome: 'readonly' }
     }

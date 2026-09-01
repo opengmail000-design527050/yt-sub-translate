@@ -1,6 +1,6 @@
 {
   "name": "sub-translator",
-  "version": "0.3.0",
+  "version": "1.0.0",
   "private": true,
   "description": "YouTube 双语字幕翻译 Chrome 扩展",
   "scripts": {
@@ -9,6 +9,8 @@
     "lint": "eslint .",
     "zip": "npm run build && node tools/zip.mjs",
     "e2e": "npm run build && node test/e2e/smoke.mjs",
+    "shots": "npm run build && node tools/shots.mjs",
+    "keygen": "node tools/keygen.mjs",
     "check": "npm run lint && npm test"
   },
   "devDependencies": {
