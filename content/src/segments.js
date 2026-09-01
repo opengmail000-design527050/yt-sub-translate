@@ -76,8 +76,9 @@ const MAX_DUR = 9;
 
 const GAP = 1.4;
 
-export function buildSegments(cues) {
-  const d = DENSITY[S.density] || DENSITY.standard;
+/** 切句。density 省略就按当前设置来 —— 显式传是为了能脱开设置直接单测。 */
+export function buildSegments(cues, density) {
+  const d = DENSITY[density || S.density] || DENSITY.standard;
   const SOFT_MAX = d.soft;   // 翻译单元的目标长度，超了才考虑切
   const HARD_MAX = d.hard;   // 超过这个不得不切，否则一屏放不下
 

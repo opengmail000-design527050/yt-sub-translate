@@ -45,7 +45,7 @@ export default [
   },
   {
     // 测试与工具脚本跑在 node 里
-    files: ['test/**/*.js', 'tools/**/*.mjs', 'icons/**/*.js'],
+    files: ['test/**/*.js', 'test/**/*.mjs', 'tools/**/*.mjs', 'icons/**/*.js'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'commonjs',
@@ -62,7 +62,8 @@ export default [
     rules: shared
   },
   {
-    files: ['tools/**/*.mjs'],
+    // .mjs 是真模块：tools 下的构建脚本，和直接 import 模块的那些单测
+    files: ['tools/**/*.mjs', 'test/**/*.mjs'],
     languageOptions: { sourceType: 'module' }
   }
 ];

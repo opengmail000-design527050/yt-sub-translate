@@ -11,7 +11,7 @@ if (build.status !== 0) {
 }
 
 const dir = __dirname;
-const files = fs.readdirSync(dir).filter((f) => f.endsWith('.test.js')).sort();
+const files = fs.readdirSync(dir).filter((f) => /\.test\.m?js$/.test(f)).sort();
 
 let pass = 0, fail = 0, broke = 0;
 for (const f of files) {
