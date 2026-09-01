@@ -158,6 +158,8 @@
     isLive: false,           // 正在直播（不是「曾经是直播」的录播）
     isUpcoming: false,       // 还没开始的首播
     unsupported: '',         // '' | live | upcoming | shorts | no-player，见 pageUnsupported
+    playerChanged: false,    // YouTube 改版，连 player response 都读不到了
+    capsMissing: [],         // 自检里缺了哪几样，报障时一句话就能定位
     rawCues: null,           // 原始 cue，改字幕长度档位时用来重新切句
     noPunct: false,          // 这一轨的原文没有标点（多半是自动字幕），翻译时要额外提示模型
     segments: [],            // [{id,start,end,text}]
@@ -206,6 +208,22 @@
   const post2page = (type, data) => {
     try { window.postMessage({ ns: NS, dir: 'c2p', type, data, token: TOKEN }, '*'); } catch (_) {}
   };
+
+  /* ------------------------------------------------------------------ *
+   * 诊断日志
+   *
+   * 200 条的环形缓冲：状态迁移、要了哪条轨、每一批的结果、每一次错误。
+   * 报障的时候用户点一下弹窗里的「复制诊断信息」就能贴出来 —— 没有这个，
+   * 别人机器上的问题基本查不动，只能来回猜。
+   * 不落盘、不上报，页面一关就没了。 */
+  const LOG_MAX = 200;
+  const logs = [];
+  const t0 = Date.now();
+  function log(msg) {
+    // 不用 toISOString：只关心相对时刻，而且时间戳里不该出现用户的时区
+    logs.push(((Date.now() - t0) / 1000).toFixed(1) + 's ' + msg);
+    if (logs.length > LOG_MAX) logs.shift();
+  }
 
   function hash(str) {
     let h = 5381;
@@ -996,6 +1014,7 @@
     if (res && res.cancelled) { b.state = 'idle'; updateStatus(); return; }
 
     if (err) {
+      log('批次 #' + batchId + ' 失败：' + err);
       b.state = 'err';
       st.error = err;
       // 我们自己的兜底超时算 timeout，其余是消息通道本身出了事
@@ -1042,6 +1061,7 @@
       b.state = 'err';
       st.error = (res && res.error) || '翻译失败';
       st.errorCode = (res && res.code) || 'network';
+      log('批次 #' + batchId + ' [' + st.errorCode + '] ' + st.error);
       // 整批失败：只有拆到底还在错位才算批次太大，401/超时之类不算
       noteBatchResult(Number((res && res.split) || 0) > 0, false);
       /* 限流：background 已经在排队了，这一批自己回来，别让用户去点重试 */
@@ -1144,10 +1164,36 @@
     return '';
   }
 
+  /* 自检的结论。inject.js 每轮轮询报一次（只在结论变了时才发）。
+   *
+   * 只有「读不到 player response」算致命 —— 那意味着字幕轨列表根本拿不到，什么都
+   * 干不了，得明确告诉用户等插件更新。其余几样缺了只是残一点：按钮没了、兜底路
+   * 走不通、认不出音轨语言，照常翻，留在诊断信息里就够了。
+   * 把「缺一样就报坏」写死是不对的：getAudioTrack 在单音轨视频上本来就可能没有，
+   * 那样会把一个明明能用的插件说成坏了。 */
+  function onSelfCheck(c) {
+    if (!c) return;
+    const miss = [];
+    if (!c.response) miss.push('player-response');
+    if (!c.captions) miss.push('captions-api');
+    if (!c.audio) miss.push('audio-api');
+    if (!c.controls) miss.push('right-controls');
+    if (!c.bar) miss.push('chrome-bottom');
+    st.capsMissing = miss;
+
+    // 已经切出句子了就说明这条路是通的，再报坏没有意义
+    const broken = !!c.broken && !st.segments.length;
+    if (broken === st.playerChanged) return;
+    st.playerChanged = broken;
+    log(broken ? 'selfcheck 坏了：' + miss.join(',') : 'selfcheck 恢复');
+    updateStatus();
+  }
+
   function refreshUnsupported() {
     const was = st.unsupported;
     st.unsupported = pageUnsupported();
     if (was === st.unsupported) return;
+    log('页面支持情况：' + (st.unsupported || '正常'));
     if (st.unsupported) {
       if (st.active) stop(false);     // 不算用户关的：直播结束了还要自己接上
       updateStatus();
@@ -1157,8 +1203,15 @@
   }
 
   function updateStatus() {
+    const was = st.status;
+    updateStatusInner();
+    if (st.status !== was) log('状态 ' + was + ' → ' + st.status + (st.error ? ' (' + st.error + ')' : ''));
+  }
+
+  function updateStatusInner() {
     // 不支持的页面压过一切：说清楚为什么，别再显示「正在获取字幕…」
     if (st.unsupported) { st.status = 'unsupported'; renderStatusChip(); return; }
+    if (st.playerChanged) { st.status = 'playerChanged'; renderStatusChip(); return; }
     if (!st.active) { st.status = 'idle'; }
     else if (!st.segments.length) { st.status = st.status === 'nosub' ? 'nosub' : 'waiting'; }
     else if (st.running > 0) { st.status = 'translating'; }
@@ -1625,6 +1678,7 @@
      * 或者视频默认轨不是原声语言），先到先得的话我们会拿「译文的译文」当原文翻，
      * 而且从此再也换不回来。带上编号，我们点名要的那条就能盖过它。 */
     st.wantReq = ++st.reqSeq;
+    log('要字幕轨 #' + st.wantReq + (st.userTrack ? '（用户指定）' : '（自动挑）'));
     // 用户已经在 CC 菜单里选好语言了就照办，别再按音轨去猜
     if (st.userTrack) {
       st.wantLang = sigLang(capSig(st.userTrack));
@@ -1864,6 +1918,7 @@
 
     st.rawCues = cues;                       // 留着，改字幕长度档位时不用重新拉字幕
     st.segments = buildSegments(cues);
+    log('收下字幕轨 ' + sig + '，切出 ' + st.segments.length + ' 句' + (st.noPunct ? '（无标点）' : ''));
     if (!st.segments.length) { st.status = 'nosub'; renderStatusChip(); return; }
     resetTier();
     st.batches = makeBatches(st.segments);
@@ -1939,6 +1994,8 @@
       onCaptionTrack(m.data);
     } else if (m.type === 'audiotrack') {
       onAudioTrack(m.data);
+    } else if (m.type === 'selfcheck') {
+      onSelfCheck(m.data);
     } else if (m.type === 'trackfail') {
       // 点名要的那条轨没找到：维持现在这条，别退回去翻成另一种语言
       if (m.data && m.data.reqId && m.data.reqId === st.wantReq) {
@@ -1987,12 +2044,33 @@
         active: st.active,
         status: st.status,
         unsupported: st.unsupported,
+        playerChanged: st.playerChanged,
+        capsMissing: st.capsMissing,
         errorCode: st.errorCode,
         error: st.error,
         segments: st.segments.length,
         translated: st.trans.size,
         running: st.running,
         hasTracks: st.tracks.length > 0
+      });
+      return true;
+    }
+    if (msg.type === 'getLog') {
+      sendResponse({
+        ok: true,
+        videoId: st.videoId,
+        status: st.status,
+        unsupported: st.unsupported,
+        capsMissing: st.capsMissing,
+        segments: st.segments.length,
+        translated: st.trans.size,
+        dropped: st.dropped.size,
+        batches: st.batches.map((b) => b.state).join(''),
+        tier: st.batchTier + '/' + st.batchCeil,
+        sourceLang: st.sourceLang,
+        trackSig: st.trackSig,
+        adopt: st.adoptState,
+        lines: logs.slice()
       });
       return true;
     }

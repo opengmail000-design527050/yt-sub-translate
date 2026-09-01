@@ -226,6 +226,41 @@
     if (a) post('audiotrack', a);
   }
 
+  /* ---------- 2.7 自检 ---------- */
+  /* 我们摸的每一样东西都是 YouTube 的内部实现：播放器元素、getPlayerResponse、
+   * captions 模块、getAudioTrack、控制栏的类名。它们随时可能在某次发版里换掉，
+   * 而坏掉的表现全都一样 —— 字幕永远「正在获取」。用户报障时说不清，我们也查不动。
+   *
+   * 所以每轮轮询顺手自检一遍，变了就报上去。区分两种：
+   *   读不到 player response = 致命，什么都干不了，明确告诉用户「等插件更新」；
+   *   其余几样 = 少一样残一点（按钮没了、兜底路走不通、认不出音轨语言），
+   *              照常翻，只在诊断信息里留个痕。
+   * 一上来读不到是正常的（播放器还没装好），所以问够 CAPS_TRIES 次才敢判死刑。 */
+  const CAPS_TRIES = 12;      // ~7 秒，跟播放器正常就绪的时间留足余量
+
+  function caps(tries) {
+    const p = getPlayer();
+    const c = {
+      player: !!p,
+      response: !!collect(),
+      captions: !!(p && typeof p.getOption === 'function' && typeof p.setOption === 'function'),
+      audio: !!(p && typeof p.getAudioTrack === 'function'),
+      controls: !!document.querySelector('#movie_player .ytp-right-controls'),
+      bar: !!document.querySelector('#movie_player .ytp-chrome-bottom')
+    };
+    c.broken = !!(c.player && !c.response && tries >= CAPS_TRIES);
+    return c;
+  }
+
+  let lastCaps = '';
+  function watchCaps(tries) {
+    const c = caps(tries);
+    const sig = JSON.stringify(c);
+    if (sig === lastCaps) return;
+    lastCaps = sig;
+    post('selfcheck', c);
+  }
+
   /* ---------- 3. 直接拉取字幕轨 ---------- */
   /* 不预设任何语言：内容脚本已经判定好原声语言并传进来，
    * 没传就退回「人工轨优先，其次自动字幕」。 */
@@ -340,7 +375,10 @@
     else if (m.type === 'disableNative') disableNative();
   });
 
-  document.addEventListener('yt-navigate-finish', () => { lastCap = ''; lastAudio = ''; reported = false; setTimeout(report, 250); });
+  document.addEventListener('yt-navigate-finish', () => {
+    lastCap = ''; lastAudio = ''; lastCaps = ''; reported = false; n = 0;
+    setTimeout(report, 250);
+  });
   document.addEventListener('yt-player-updated', () => setTimeout(report, 250));
   // 播放器换了视频/换了配置，字幕轨列表会跟着变
   document.addEventListener('yt-page-data-updated', () => { reported = false; setTimeout(report, 250); });
@@ -351,10 +389,11 @@
   let n = 0;
   const iv = setInterval(() => {
     report();
+    watchCaps(n);
     // 前 40 次（~24 秒）密集问；之后降频常驻，代价可以忽略
     if (++n >= 40) {
       clearInterval(iv);
-      setInterval(() => { if (!reported) report(); }, 3000);
+      setInterval(() => { if (!reported) { report(); watchCaps(n); } }, 3000);
     }
   }, 600);
   report();

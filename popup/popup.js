@@ -251,6 +251,23 @@ async function refreshStatus() {
     return;
   }
 
+  /* YouTube 改版了：我们摸的是它的内部实现，随时可能在某次发版里换掉。坏了要说得出
+     坏在哪一件上 —— 用户报障时一句话就能定位，也不必再去猜是不是自己哪儿没弄对。 */
+  if (r.playerChanged) {
+    $('statusText').textContent = 'YouTube 改版了，插件读不到播放器数据';
+    $('dot').removeAttribute('data-s');
+    $('videoTitle').textContent = r.title || '';
+    const miss = (r.capsMissing || []).join('、');
+    $('srcText').textContent = miss ? '缺少：' + miss + '　·　等插件更新' : '等插件更新';
+    $('srcText').classList.remove('hidden');
+    $('barFill').style.width = '0%';
+    $('errText').classList.add('hidden');
+    $('retryBtn').classList.add('hidden');
+    $('fixBtn').classList.add('hidden');
+    $('purgeBtn').classList.add('hidden');
+    return;
+  }
+
   /* 不支持的页面压过一切：直播翻不了，再显示「正在获取字幕…」就是在骗人 */
   if (r.unsupported) {
     $('statusText').textContent = UNSUPPORTED_TEXT[r.unsupported] || '这个页面暂不支持';
@@ -260,6 +277,7 @@ async function refreshStatus() {
     $('barFill').style.width = '0%';
     $('errText').classList.add('hidden');
     $('retryBtn').classList.add('hidden');
+    $('fixBtn').classList.add('hidden');
     $('purgeBtn').classList.add('hidden');
     return;
   }

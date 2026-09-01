@@ -844,6 +844,50 @@ const check = (name, cond, extra) => {
         posted.length > 0 && posted.every((p) => p.token === pageToken()),
         JSON.stringify(posted.slice(-1)));
 
+  console.log('\n[29] YouTube 改版的自检');
+  {
+    /* 我们摸的每一样都是 YouTube 的内部实现：播放器元素、getPlayerResponse、
+       captions 模块、getAudioTrack、控制栏类名。坏掉的表现全都一样 ——
+       字幕永远「正在获取」，用户报障说不清，我们也查不动。 */
+    toPage('player', { videoId: 'SC', title: 'sc', audioLang: 'en', tracks: [] });
+    await sleep(30);
+
+    // 少一样非致命的：照常工作，只在诊断里留痕
+    toPage('selfcheck', { player: true, response: true, captions: true, audio: false,
+                          controls: true, bar: true, broken: false });
+    await sleep(30);
+    const mild = await ask();
+    check('少一样非致命的不算坏', mild.status !== 'playerChanged', JSON.stringify(mild));
+    check('但记下来了缺哪一样', (mild.capsMissing || []).includes('audio-api'),
+          JSON.stringify(mild.capsMissing));
+
+    // 连 player response 都读不到：这才是致命的
+    toPage('selfcheck', { player: true, response: false, captions: false, audio: false,
+                          controls: false, bar: false, broken: true });
+    await sleep(30);
+    const bad = await ask();
+    check('致命的那一样缺了就报改版', bad.status === 'playerChanged' && bad.playerChanged === true,
+          JSON.stringify(bad));
+    check('说得出缺的是哪一项', (bad.capsMissing || []).includes('player-response'),
+          JSON.stringify(bad.capsMissing));
+
+    // 恢复
+    toPage('selfcheck', { player: true, response: true, captions: true, audio: true,
+                          controls: true, bar: true, broken: false });
+    await sleep(30);
+    check('恢复了就不再报', (await ask()).status !== 'playerChanged');
+  }
+
+  console.log('\n[30] 诊断信息');
+  {
+    const r = await new Promise((res) => chrome.runtime.onMessage._l.forEach((f) => f({ type: 'getLog' }, {}, res)));
+    check('拿得到日志', !!r && Array.isArray(r.lines) && r.lines.length > 0,
+          JSON.stringify(r && r.lines && r.lines.length));
+    check('里面有状态迁移', r.lines.some((l) => l.includes('状态 ')), JSON.stringify(r.lines.slice(0, 3)));
+    check('带上了当前的关键状态', typeof r.batches === 'string' && 'tier' in r, JSON.stringify(r.tier));
+    check('日志封顶 200 条', r.lines.length <= 200, String(r.lines.length));
+  }
+
   console.log('\n结果：' + pass + ' 通过 / ' + fail + ' 失败');
   process.exit(fail ? 1 : 0);
 })();
