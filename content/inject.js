@@ -41,6 +41,11 @@
     try { return new URL(u, location.href).searchParams.get('v') || ''; } catch (_) { return ''; }
   };
 
+  /* 最近一次截到「有内容的」字幕是什么时候。兜底打开原生字幕之后靠它判断播放器到底
+   * 发没发请求（我们自己直接拉取拿回的空体不算）。 */
+  let hookAt = 0;
+  const noteHook = (b) => { if (typeof b === 'string' && b.length > 40) hookAt = Date.now(); };
+
   const origFetch = window.fetch;
   window.fetch = function (input, _init) {
     const p = origFetch.apply(this, arguments);
@@ -49,8 +54,10 @@
       if (isTT(url)) {
         p.then((r) => {
           try {
-            r.clone().text().then((b) =>
-              post('track', { source: 'hook', url, body: b, videoId: videoOfUrl(url) }));
+            r.clone().text().then((b) => {
+              noteHook(b);
+              post('track', { source: 'hook', url, body: b, videoId: videoOfUrl(url) });
+            });
           } catch (_) {}
         }).catch(() => {});
       }
@@ -69,6 +76,7 @@
       if (isTT(this.__ytstUrl)) {
         this.addEventListener('load', () => {
           try {
+            noteHook(this.responseText);
             post('track', {
               source: 'hook', url: this.__ytstUrl, body: this.responseText,
               videoId: videoOfUrl(this.__ytstUrl)
@@ -162,11 +170,13 @@
   const capSig = (c) => (c ? c.languageCode + '|' + c.kind + '|' + c.tlang : '');
 
   let lastCap = '';
+  let quietUntil = 0;       // 我们自己刚动过字幕轨，这段时间里的变化不算用户的选择
   function watchCaption() {
     const c = currentCaption();
     const sig = capSig(c);
     if (sig === lastCap) return;
     lastCap = sig;
+    if (Date.now() < quietUntil) return;
     if (c) post('captiontrack', c);
   }
 
@@ -178,6 +188,9 @@
    * 那就退回原来的行为，不会更糟。 */
   function markCaptionSeen() {
     lastCap = capSig(currentCaption());
+    /* setOption 往往要过一会儿才反映到 getOption 上，光记一下当前值压不住 ——
+     * 实测兜底那次切换照样被报成了「用户在菜单里选了英文」。所以再给一段静默期。 */
+    quietUntil = Date.now() + 2500;
   }
 
   /* ---------- 2.6 当前音轨 ---------- */
@@ -288,6 +301,13 @@
   function pickTrack(tracks, prefix) {
     if (!tracks || !tracks.length) return null;
     const base = (c) => String(c || '').toLowerCase().split('-')[0];
+    /* 没传语言时按自动字幕的语言认原声（跟内容脚本的 chooseTrack 同一个判据）。
+     * 直接拿第一条人工轨的话，很多访谈的第一条是志愿者上传的俄语 / 西语译轨，
+     * 翻出来就是「译文的译文」。 */
+    if (!prefix) {
+      const asr = tracks.find((t) => t.kind === 'asr');
+      prefix = asr ? asr.languageCode : '';
+    }
     if (prefix) {
       const p = base(prefix);
       const hit = (t) => base(t.languageCode) === p;
@@ -352,24 +372,50 @@
    * null = 我们没动过；{} = 动之前字幕本来就是关着的。 */
   let nativePrev = null;
 
-  function enableNative(lang) {
+  /* tries：冷启动时 captions 模块往往还没装好，tracklist 是空的。以前空了就收手，
+   * 可内容脚本那边已经记下「兜底试过了」，要等 8 秒后的整轮重来 —— 字幕框就白空这么久。
+   * 所以空的时候隔半秒再看，最多看 10 次。
+   * kicks：切过之后播放器也没发请求时，又重来了几次（见下面）。 */
+  function enableNative(lang, tries, kicks) {
     const p = getPlayer();
     if (!p) return;
+    tries = tries || 0;
+    kicks = kicks || 0;
     try {
       if (typeof p.loadModule === 'function') p.loadModule('captions');
       setTimeout(() => {
         let list = [];
         try { list = p.getOption('captions', 'tracklist', { includeAsr: true }) || []; } catch (_) {}
         if (!list.length) { try { list = p.getOption('captions', 'tracklist') || []; } catch (_) {} }
+        if (!list.length && tries < 10) { enableNative(lang, tries + 1, kicks); return; }
         const t = pickTrack(list, lang || '');
         if (!t) return;
-        if (nativePrev === null) {
-          let cur = null;
-          try { cur = p.getOption('captions', 'track'); } catch (_) {}
-          nativePrev = cur && cur.languageCode ? cur : {};
+        let cur = null;
+        try { cur = p.getOption('captions', 'track'); } catch (_) {}
+        if (nativePrev === null) nativePrev = cur && cur.languageCode ? cur : {};
+        /* 原生字幕已经开着、而且正是这一条：再 setOption 一遍什么都不会发生。
+         * 冷启动时播放器的首份字幕跟着视频流一起下来（SABR），根本不走 timedtext，
+         * 劫持就永远等不到东西 —— 而直接拉取又因为缺 PO token 拿回空体，
+         * 于是整个视频停在「等字幕」。先关再开，播放器会带着 pot 重新请求一次。 */
+        const same = cur && cur.languageCode === t.languageCode && (cur.kind || '') === (t.kind || '');
+        const since = Date.now();
+        if (same) {
+          try { p.setOption('captions', 'track', {}); } catch (_) {}
+          setTimeout(() => {
+            try { p.setOption('captions', 'track', t); } catch (_) {}
+            markCaptionSeen();
+          }, 300);
+        } else {
+          try { p.setOption('captions', 'track', t); } catch (_) {}
         }
-        try { p.setOption('captions', 'track', t); } catch (_) {}
         markCaptionSeen();
+        /* 页面刚加载的那几秒，关了再开播放器也可能照旧从视频流里取字幕、一个请求都
+         * 不发。等一会儿还没截到东西就再切一次，而不是让内容脚本干等 8 秒的整轮重来。
+         * 内容脚本已经说了「不用了」（disableNative 把 nativePrev 清掉了）就停。 */
+        setTimeout(() => {
+          if (nativePrev === null || hookAt >= since || kicks >= 3) return;
+          enableNative(lang, 0, kicks + 1);
+        }, 2500);
       }, 400);
     } catch (_) {}
   }

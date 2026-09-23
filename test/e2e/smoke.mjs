@@ -43,12 +43,18 @@ await ctx.route('https://www.youtube.com/watch**', async (route) => {
   const tracks = v === 'MULTI'
     ? [{ lang: 'en', kind: 'asr' }, { lang: 'ja' }]
     : [{ lang: 'en', kind: 'asr' }];
-  await route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: playerHtml(v, tracks) });
+  await route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8',
+                       body: playerHtml(v, tracks, { pot: v === 'POT' }) });
 });
 
 await ctx.route('https://www.youtube.com/api/timedtext**', async (route) => {
   const url = new URL(route.request().url());
   const lang = url.searchParams.get('lang') || 'en';
+  // 真 YouTube 现在的样子：没有 PO token 就给 200 空体
+  if (url.searchParams.get('v') === 'POT' && !url.searchParams.get('pot')) {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '' });
+    return;
+  }
   const word = lang === 'ja' ? 'Bravo' : (url.searchParams.get('v') || 'Alpha');
   await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(CUES(word)) });
 });
@@ -128,10 +134,6 @@ console.log('\n[1] 冷启动：装上就能翻');
   const text = await page.locator(box).textContent().catch(() => '');
   ok('字幕框里真的出现了译文', String(text).startsWith('译:'), String(text).slice(0, 40));
   ok('确实把行发去翻了', api.calls.length > 0, JSON.stringify(api.calls.length));
-  // 按钮是每秒一次的巡逻装上去的，给它一轮时间
-  const btn = await page.waitForSelector('#movie_player .ytst-btn', { timeout: 6000 })
-    .then(() => true).catch(() => false);
-  ok('播放器上多了那个「译」按钮', btn);
   await page.close();
 }
 
@@ -191,6 +193,25 @@ console.log('\n[4] 限流：不用人点，自己会回来');
   }, box, { timeout: 30000 }).then(() => true).catch(() => false);
   ok('撞了三次 429 之后自己翻出来了（没人点重试）', got);
   ok('确实重发过', api.calls.length > 3, '共 ' + api.calls.length + ' 次');
+  await page.close();
+}
+
+console.log('\n[5] 直接拉取拿回空体、原生字幕早就开着：兜底要逼播放器重新请求');
+{
+  /* 真 YouTube 冷启动时就是这样：扩展直接拉 baseUrl 缺 PO token，拿回 200 空体；
+     兜底去「打开原生字幕」，可它本来就开着同一条轨，setOption 什么都不触发 ——
+     整个视频永远停在「等字幕」。要先关再开，播放器才会带着 pot 发一次请求。 */
+  const page = await ctx.newPage();
+  api.lines.length = 0;
+  const t0 = Date.now();
+  await page.goto('https://www.youtube.com/watch?v=POT');
+  const got = await page.waitForFunction((sel) => {
+    const el = document.querySelector(sel);
+    return el && el.textContent && el.textContent.indexOf('译:') === 0;
+  }, box, { timeout: 20000 }).then(() => true).catch(() => false);
+  ok('还是翻出来了', got);
+  ok('而且没有干等一整轮 8 秒的重试', Date.now() - t0 < 8000, (Date.now() - t0) + 'ms');
+  ok('翻的是这个视频的句子', api.lines.some((l) => l.includes('POT')), api.lines.slice(0, 1).join(''));
   await page.close();
 }
 

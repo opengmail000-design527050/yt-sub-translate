@@ -4,7 +4,7 @@
  * 消息出来。所以注入时现生成一个随机 token 交给 inject.js，两边的消息都带着它。
  */
 import { st } from './state.js';
-import { onSelfCheck, refreshUnsupported } from './state.js';
+import { onSelfCheck, refreshUnsupported, log } from './state.js';
 import { resetVideo, evaluateTracks, onTrackBody, onCaptionTrack, onAudioTrack } from './tracks.js';
 
 const NS = 'ytst';
@@ -85,6 +85,7 @@ export function wirePage() {
     } else if (m.type === 'selfcheck') {
       onSelfCheck(m.data);
     } else if (m.type === 'trackfail') {
+      log('没拿到字幕 #' + ((m.data && m.data.reqId) || '-') + '：' + ((m.data && m.data.reason) || '?'));
       // 点名要的那条轨没找到：维持现在这条，别退回去翻成另一种语言
       if (m.data && m.data.reqId && m.data.reqId === st.wantReq) {
         st.wantReq = 0;

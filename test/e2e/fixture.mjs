@@ -12,7 +12,11 @@ export const CUES = (word, n = 24) => ({
   }))
 });
 
-export function playerHtml(videoId, tracks) {
+/* opts.pot：模拟 2026 年的真 YouTube ——
+ *   - timedtext 不带 PO token（pot=）就回 200 空体，扩展自己直接拉是拉不到的；
+ *   - 原生字幕一上来就开着，首份字幕跟着视频流（SABR）下来，不发 timedtext 请求；
+ *   - 只有字幕轨真的变了，播放器才带着 pot 发一次 XHR。设成同一条轨什么都不发生。 */
+export function playerHtml(videoId, tracks, opts = {}) {
   const pr = {
     videoDetails: { videoId, title: 'E2E ' + videoId, isLive: false, isLiveContent: false },
     captions: { playerCaptionsTracklistRenderer: { captionTracks: tracks.map((t) => ({
@@ -31,13 +35,22 @@ export function playerHtml(videoId, tracks) {
 <div id="movie_player" class="html5-video-player">
   <video class="html5-main-video"></video>
   <div class="ytp-chrome-bottom"><div class="ytp-right-controls">
-    <button class="ytp-settings-button">s</button>
+    <div class="ytp-right-controls-left">
+      <button class="ytp-subtitles-button">cc</button>
+      <button class="ytp-settings-button">s</button>
+    </div>
+    <div class="ytp-right-controls-right">
+      <button class="ytp-size-button">t</button>
+      <button class="ytp-fullscreen-button">f</button>
+    </div>
   </div></div>
 </div>
 <script>
 window.ytInitialPlayerResponse = ${JSON.stringify(pr)};
 const p = document.getElementById('movie_player');
-let curTrack = null;                       // CC 菜单里选中的那条
+const POT = ${!!opts.pot};
+// CC 菜单里选中的那条；pot 模式下一上来就开着第一条轨
+let curTrack = POT ? ${JSON.stringify({ languageCode: (tracks[0] || {}).lang, kind: (tracks[0] || {}).kind || '' })} : null;
 p.getPlayerResponse = () => window.ytInitialPlayerResponse;
 p.getOption = (mod, key) => {
   if (mod !== 'captions') return null;
@@ -45,7 +58,19 @@ p.getOption = (mod, key) => {
   if (key === 'tracklist') return ${JSON.stringify(tracks.map((t) => ({ languageCode: t.lang, kind: t.kind || '' })))};
   return null;
 };
-p.setOption = (mod, key, v) => { if (mod === 'captions' && key === 'track') curTrack = v; };
+p.setOption = (mod, key, v) => {
+  if (mod !== 'captions' || key !== 'track') return;
+  const was = curTrack;
+  curTrack = v;
+  const same = was && v && was.languageCode === v.languageCode && (was.kind || '') === (v.kind || '');
+  if (!POT || !v || !v.languageCode || same) return;
+  const t = window.ytInitialPlayerResponse.captions.playerCaptionsTracklistRenderer.captionTracks
+    .find((c) => c.languageCode === v.languageCode && (c.kind || '') === (v.kind || ''));
+  if (!t) return;
+  const x = new XMLHttpRequest();
+  x.open('GET', t.baseUrl + '&fmt=json3&pot=e2e-token&c=WEB');
+  x.send();
+};
 p.loadModule = () => {};
 p.getAudioTrack = () => ({ meta: { id: 'en.4', name: 'English', isDefault: true } });
 p.getAvailableAudioTracks = () => [1];
