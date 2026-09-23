@@ -1,6 +1,6 @@
 {
   "name": "sub-translator",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "description": "YouTube 双语字幕翻译 Chrome 扩展",
   "scripts": {
