@@ -5,6 +5,7 @@
   "description": "YouTube 双语字幕翻译 Chrome 扩展",
   "scripts": {
     "build": "node tools/build.mjs",
+    "dev": "node tools/build.mjs --dev && node tools/reload.mjs",
     "test": "node test/run.js",
     "lint": "eslint .",
     "zip": "npm run build && node tools/zip.mjs",

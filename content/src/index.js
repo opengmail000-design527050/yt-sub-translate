@@ -8,7 +8,7 @@
  *   scheduler 分批、调度、收结果、失败怎么办
  *   cache     本地缓存
  *   tracks    选轨、换轨、换视频、自带译文轨
- *   overlay   字幕框与播放器按钮（唯一碰 DOM 的地方）
+ *   overlay   字幕框（唯一碰 DOM 的地方）
  *   bridge    与主世界脚本 inject.js 的消息通道
  * 外加一个 state：状态、设置，以及「现在是什么状态」这个判断。
  *
@@ -43,55 +43,55 @@ import { inject, post2page, wirePage } from './bridge.js';
     try { ensureButton(); } catch (_) {}
   };
 
+
+  /* 弹窗要的「现在是什么状态」和「复制诊断」要的日志。开发构建里页面也能要（见下面 __DEV__） */
+  const statusSnapshot = () => ({
+    onYoutube: true,
+    videoId: st.videoId,
+    title: st.title,
+    sourceLang: st.sourceLang,
+    audioLang: st.audioLang,
+    audioDubbed: st.audioDubbed,
+    adopted: st.adoptState === 'on' ? st.adoptLang : '',
+    trackLang: sigLang(st.trackSig),
+    trackKind: String(st.trackSig).split('|')[1] || '',
+    trackList: st.tracks.map((t) => ({ lang: t.languageCode, kind: t.kind })),
+    needsTranslation: st.needsTranslation,
+    active: st.active,
+    status: st.status,
+    unsupported: st.unsupported,
+    playerChanged: st.playerChanged,
+    capsMissing: st.capsMissing,
+    errorCode: st.errorCode,
+    error: st.error,
+    segments: st.segments.length,
+    translated: st.trans.size,
+    running: st.running,
+    hasTracks: st.tracks.length > 0
+  });
+
+  const logSnapshot = () => ({
+    ok: true,
+    videoId: st.videoId,
+    status: st.status,
+    unsupported: st.unsupported,
+    capsMissing: st.capsMissing,
+    segments: st.segments.length,
+    translated: st.trans.size,
+    dropped: st.dropped.size,
+    batches: st.batches.map((b) => b.state).join(''),
+    tier: st.batchTier + '/' + st.batchCeil,
+    sourceLang: st.sourceLang,
+    trackSig: st.trackSig,
+    adopt: st.adoptState,
+    lines: logs.slice()
+  });
+
   /* popup 通信 */
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (!msg || !msg.type) return;
-    if (msg.type === 'getStatus') {
-      sendResponse({
-        onYoutube: true,
-        videoId: st.videoId,
-        title: st.title,
-        sourceLang: st.sourceLang,
-        audioLang: st.audioLang,
-        audioDubbed: st.audioDubbed,
-        adopted: st.adoptState === 'on' ? st.adoptLang : '',
-        trackLang: sigLang(st.trackSig),
-        trackKind: String(st.trackSig).split('|')[1] || '',
-        trackList: st.tracks.map((t) => ({ lang: t.languageCode, kind: t.kind })),
-        needsTranslation: st.needsTranslation,
-        active: st.active,
-        status: st.status,
-        unsupported: st.unsupported,
-        playerChanged: st.playerChanged,
-        capsMissing: st.capsMissing,
-        errorCode: st.errorCode,
-        error: st.error,
-        segments: st.segments.length,
-        translated: st.trans.size,
-        running: st.running,
-        hasTracks: st.tracks.length > 0
-      });
-      return true;
-    }
-    if (msg.type === 'getLog') {
-      sendResponse({
-        ok: true,
-        videoId: st.videoId,
-        status: st.status,
-        unsupported: st.unsupported,
-        capsMissing: st.capsMissing,
-        segments: st.segments.length,
-        translated: st.trans.size,
-        dropped: st.dropped.size,
-        batches: st.batches.map((b) => b.state).join(''),
-        tier: st.batchTier + '/' + st.batchCeil,
-        sourceLang: st.sourceLang,
-        trackSig: st.trackSig,
-        adopt: st.adoptState,
-        lines: logs.slice()
-      });
-      return true;
-    }
+    if (msg.type === 'getStatus') { sendResponse(statusSnapshot()); return true; }
+    if (msg.type === 'getLog') { sendResponse(logSnapshot()); return true; }
     if (msg.type === 'toggle') { toggle(); sendResponse({ ok: true, active: st.active }); return true; }
     if (msg.type === 'setActive') { msg.value ? start() : stop(true); sendResponse({ ok: true }); return true; }
     if (msg.type === 'retry') { retryErrors(); sendResponse({ ok: true }); return true; }
@@ -104,6 +104,15 @@ import { inject, post2page, wirePage } from './bridge.js';
       return true;
     }
   });
+
+  /* 开发构建（npm run dev）专用：扩展页面不让自动化工具进，调试时从页面里要一份状态。
+   * 正式构建里 __DEV__ 被替换成 false，这段成了 if (false)，监听永远装不上。 */
+  if (__DEV__) {
+    window.addEventListener('message', (e) => {
+      if (e.source !== window || !e.data || e.data.ns !== 'ytst-dev' || e.data.type !== 'dump') return;
+      window.postMessage({ ns: 'ytst-dev', type: 'dump-result', status: statusSnapshot(), log: logSnapshot() }, '*');
+    });
+  }
 
   async function loadSettings() {
     try {

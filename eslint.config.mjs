@@ -32,7 +32,8 @@ export default [
         DOMParser: 'readonly', XMLHttpRequest: 'readonly', ResizeObserver: 'readonly',
         getComputedStyle: 'readonly', structuredClone: 'readonly',
         performance: 'readonly', crypto: 'readonly', Node: 'readonly', Event: 'readonly',
-        CustomEvent: 'readonly', MutationObserver: 'readonly', self: 'readonly'
+        CustomEvent: 'readonly', MutationObserver: 'readonly', self: 'readonly',
+        __DEV__: 'readonly'   // esbuild 在打包时替换成 true / false，见 tools/build.mjs
       }
     },
     /* 扩展本体多一条 no-shadow：一个叫 t 的计时器变量曾经把取文案的 t() 遮成了
