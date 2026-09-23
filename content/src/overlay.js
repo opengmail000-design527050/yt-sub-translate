@@ -5,12 +5,11 @@
 import { DEFAULTS, FONT_STACKS, t } from '../../common.js';
 import { S, st, clamp, getVideo, getPlayerEl, patchSettings } from './state.js';
 import { schedule, SEEK_JUMP, SEEK_SETTLE } from './scheduler.js';
-import { toggle } from './tracks.js';
 
 /* ------------------------------------------------------------------ *
  * 叠加层渲染
  * ------------------------------------------------------------------ */
-let overlay = null, box = null, elOrig = null, elTrans = null, chip = null, sizeWatcher = null;
+let overlay = null, box = null, elOrig = null, elTrans = null, sizeWatcher = null;
 
 function ensureOverlay() {
   const player = getPlayerEl();
@@ -365,39 +364,4 @@ export function render() {
 
   if (changed) fitWidth();
   applyLayout();
-}
-
-/* 状态小圆点（在播放器按钮上） */
-export function renderStatusChip() {
-  if (!chip) return;
-  chip.dataset.state = st.status;
-}
-
-/* ------------------------------------------------------------------ *
- * 播放器按钮
- * ------------------------------------------------------------------ */
-export function ensureButton() {
-  const right = document.querySelector('#movie_player .ytp-right-controls');
-  if (!right) return;
-  let btn = right.querySelector('.ytst-btn');
-  if (btn && btn.isConnected) { syncButton(); return; }
-
-  btn = document.createElement('button');
-  btn.className = 'ytp-button ytst-btn';
-  btn.title = t('btnTitle', '双语字幕翻译 (Alt+Shift+T)');
-  // 按钮上那个字也跟着语言走：英文界面下一个「译」字反而认不出来
-  btn.innerHTML = '<span class="ytst-btn-label">' + t('btnLabel', '译') + '</span><span class="ytst-dot"></span>';
-  btn.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
-  const settings = right.querySelector('.ytp-settings-button');
-  if (settings) right.insertBefore(btn, settings); else right.insertBefore(btn, right.firstChild);
-  chip = btn.querySelector('.ytst-dot');
-  syncButton();
-}
-
-export function syncButton() {
-  const btn = document.querySelector('#movie_player .ytst-btn');
-  if (!btn) return;
-  btn.classList.toggle('ytst-on', st.active);
-  chip = btn.querySelector('.ytst-dot');
-  renderStatusChip();
 }

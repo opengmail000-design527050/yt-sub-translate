@@ -4,7 +4,6 @@
  * 模块之间靠 ES 的实时绑定看到同一份新值（打包之后仍然如此）。
  */
 import { DEFAULTS } from '../../common.js';
-import { renderStatusChip } from './overlay.js';
 import { stop, evaluateTracks } from './tracks.js';
 
 /* 设置读回来之前，一切语言/自动开启的判定都挂起（见 evaluateTracks 的注释）。
@@ -166,7 +165,6 @@ export function onSelfCheck(c) {
   if (!c.response) miss.push('player-response');
   if (!c.captions) miss.push('captions-api');
   if (!c.audio) miss.push('audio-api');
-  if (!c.controls) miss.push('right-controls');
   if (!c.bar) miss.push('chrome-bottom');
   st.capsMissing = miss;
 
@@ -205,12 +203,11 @@ export function updateStatus() {
 
 function updateStatusInner() {
   // 不支持的页面压过一切：说清楚为什么，别再显示「正在获取字幕…」
-  if (st.unsupported) { st.status = 'unsupported'; renderStatusChip(); return; }
-  if (st.playerChanged) { st.status = 'playerChanged'; renderStatusChip(); return; }
+  if (st.unsupported) { st.status = 'unsupported'; return; }
+  if (st.playerChanged) { st.status = 'playerChanged'; return; }
   if (!st.active) { st.status = 'idle'; }
   else if (!st.segments.length) { st.status = st.status === 'nosub' ? 'nosub' : 'waiting'; }
   else if (st.running > 0) { st.status = 'translating'; }
   else if (st.error) { st.status = 'error'; }
   else { st.status = 'ready'; }
-  renderStatusChip();
 }

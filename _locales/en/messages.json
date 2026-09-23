@@ -16,12 +16,6 @@
   "boxError": {
     "message": "· translation failed — open the extension popup ·"
   },
-  "btnTitle": {
-    "message": "Bilingual subtitles (Alt+Shift+T)"
-  },
-  "btnLabel": {
-    "message": "CC"
-  },
   "errBackendSilent": {
     "message": "The background never answered; this batch was dropped (you can retry)"
   },

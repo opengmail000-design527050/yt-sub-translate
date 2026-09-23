@@ -7,7 +7,7 @@ import { t } from '../../common.js';
 import { S, st, log, flags, updateStatus, getVideo } from './state.js';
 import { wid } from './segments.js';
 import { cacheGet, cachePut, cacheKey, cacheIndexOp } from './cache.js';
-import { render, renderStatusChip } from './overlay.js';
+import { render } from './overlay.js';
 
 /* 批次越大越省：那 250 token 的系统提示是按「次」付的，一批装的句子多一倍，
  * 摊到每句就少一半；而且同一批里模型能看见更多上下文，术语和语气反而更稳。
@@ -253,7 +253,6 @@ export async function runBatch(bi) {
   b.state = 'run';
   st.running++;
   st.status = 'translating';
-  renderStatusChip();
 
   /* 送出去之前先摘两类不必花钱的行：
    * 1. 缓存里已经有的 —— 访谈里「Right.」「Exactly.」这类短句整段视频反复出现，

@@ -278,7 +278,6 @@
       response: !!collect(),
       captions: !!(p && typeof p.getOption === 'function' && typeof p.setOption === 'function'),
       audio: !!(p && typeof p.getAudioTrack === 'function'),
-      controls: !!document.querySelector('#movie_player .ytp-right-controls'),
       bar: !!document.querySelector('#movie_player .ytp-chrome-bottom')
     };
     c.broken = !!(c.player && !c.response && onVideoPage() &&

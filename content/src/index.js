@@ -21,7 +21,7 @@ import { loadCache, applyCacheToAll, saveCacheNow } from './cache.js';
 import { schedule, makeBatches, resetTier, bumpEpoch, retryErrors, purgeCache } from './scheduler.js';
 import { applyAdopted, pickTargetTrack, onAudioTrack, evaluateTracks, maybeAdopt, resegment,
          requestTrack, start, stop, toggle, sigLang } from './tracks.js';
-import { render, findIndex, ensureButton, applyStyleVars } from './overlay.js';
+import { render, findIndex, applyStyleVars } from './overlay.js';
 import { inject, post2page, wirePage } from './bridge.js';
 
 (function () {
@@ -38,10 +38,6 @@ import { inject, post2page, wirePage } from './bridge.js';
     }
     requestAnimationFrame(loop);
   }
-
-  const observeUi = () => {
-    try { ensureButton(); } catch (_) {}
-  };
 
 
   /* 弹窗要的「现在是什么状态」和「复制诊断」要的日志。开发构建里页面也能要（见下面 __DEV__） */
@@ -239,7 +235,6 @@ import { inject, post2page, wirePage } from './bridge.js';
     inject();
     wirePage();
     requestAnimationFrame(loop);
-    setInterval(observeUi, 1000);
     setInterval(() => {
       refreshUnsupported();          // Shorts 是靠地址认的，站内跳转随时会变
       if (!st.active) return;

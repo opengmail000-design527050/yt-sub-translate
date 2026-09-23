@@ -6,7 +6,7 @@ import { S, st, log, updateStatus, pageUnsupported, timing, flags, patchSettings
 import { buildSegments, parseJson3, parseXml, decodeEntities, isWide } from './segments.js';
 import { loadCache, applyCacheToAll, saveCacheNow } from './cache.js';
 import { schedule, makeBatches, resetTier, bumpEpoch } from './scheduler.js';
-import { render, removeOverlay, renderStatusChip, syncButton } from './overlay.js';
+import { render, removeOverlay } from './overlay.js';
 import { post2page } from './bridge.js';
 
 /* ---------- 语言 ---------- */
@@ -188,7 +188,6 @@ export async function start() {
   st.userOff = false;
   st.settleAt = 0;
   document.documentElement.classList.toggle('ytst-hide-native', !!S.hideNative);
-  syncButton();
   if (!st.segments.length) requestTrack();
   else { maybeAdopt(); schedule(); render(); }
   updateStatus();
@@ -203,7 +202,6 @@ export function stop(byUser) {
    * 负责关。inject.js 那边记着动手前的状态，这里让它原样还回去。 */
   if (st.nativeOn) { st.nativeOn = false; post2page('disableNative'); }
   removeOverlay();
-  syncButton();
   updateStatus();
 }
 
@@ -220,7 +218,6 @@ export function requestTrack() {
   st.trackAt = Date.now();
   st.fallbackTried = false;
   st.status = 'waiting';
-  renderStatusChip();
   /* 两种情况都带编号。播放器可能正在同时拉另一条轨（账号开了自动翻译、
    * 或者视频默认轨不是原声语言），先到先得的话我们会拿「译文的译文」当原文翻，
    * 而且从此再也换不回来。带上编号，我们点名要的那条就能盖过它。 */
@@ -323,7 +320,7 @@ export function evaluateTracks() {
   if (st.unsupported) { updateStatus(); return; }
 
   if (!st.tracks.length) {
-    if (!st.active) { st.status = 'nosub'; renderStatusChip(); }
+    if (!st.active) { st.status = 'nosub'; }
     return;
   }
   if (st.status === 'nosub') st.status = 'idle';
@@ -461,7 +458,7 @@ export async function onTrackBody(data) {
   st.rawCues = cues;                       // 留着，改字幕长度档位时不用重新拉字幕
   st.segments = buildSegments(cues);
   log('收下字幕轨 ' + sig + '，切出 ' + st.segments.length + ' 句' + (st.noPunct ? '（无标点）' : ''));
-  if (!st.segments.length) { st.status = 'nosub'; renderStatusChip(); return; }
+  if (!st.segments.length) { st.status = 'nosub'; return; }
   resetTier();
   st.batches = makeBatches(st.segments);
 
