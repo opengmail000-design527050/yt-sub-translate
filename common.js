@@ -96,7 +96,8 @@ export const FONT_STACKS = {
  * ------------------------------------------------------------------ */
 export function t(key, fallback, subs) {
   let s = '';
-  try { s = chrome.i18n.getMessage(key, subs) || ''; } catch (_) {}
+  // 该显示中文、Chrome 却按它自己的界面语言给了英文包：直接用代码里的中文（见 uiLanguage）
+  if (!chineseOverride()) { try { s = chrome.i18n.getMessage(key, subs) || ''; } catch (_) {} }
   if (s) return s;
   s = fallback === undefined ? key : fallback;
   // 兜底那句里的 $1 $2 得自己填 —— 不然漏一条语言包就会在界面上露出一个 $1
@@ -133,8 +134,26 @@ export function applyI18n(root) {
   }
 }
 
+/* 「用户读得懂的语言」。原来只看 chrome.i18n.getUILanguage()，也就是 Chrome 自己的
+ * 界面语言 —— 可在 Linux 上它取自环境变量 LANG，LANG=C.UTF-8 时就是 en-US，哪怕用户在
+ * Chrome 设置里把中文排在了第一位。结果中文用户拿到一套英文界面，「目标语言 auto」
+ * 也跟着译成英文，英文视频干脆判成「无需翻译」。
+ * 所以 Chrome 界面是英文、而首选语言（设置 → 语言，第一项）不是英文时，听首选语言的。
+ * 反过来（界面是中文、首选英文）不改：那多半是用户自己选的界面语言。 */
 export function uiLanguage() {
-  try { return chrome.i18n.getUILanguage() || 'zh-CN'; } catch (_) { return 'zh-CN'; }
+  let ui = '';
+  try { ui = chrome.i18n.getUILanguage() || ''; } catch (_) {}
+  let pref = '';
+  try { pref = (navigator.languages && navigator.languages[0]) || ''; } catch (_) {}
+  if (pref && /^en\b/i.test(ui) && !/^en\b/i.test(pref)) return pref;
+  return ui || 'zh-CN';
+}
+
+/* 界面该是中文、chrome.i18n 却会给英文包的那种情况 */
+function chineseOverride() {
+  let ui = '';
+  try { ui = chrome.i18n.getUILanguage() || ''; } catch (_) {}
+  return /^en\b/i.test(ui) && /^zh\b/i.test(uiLanguage());
 }
 
 /** 把设置里的 targetLang 解析成给模型看的语言名。'auto' → 跟随浏览器。 */
@@ -207,7 +226,7 @@ export async function getProfiles() {
     return { active, list: p.list };
   }
   const s = await getSettings();
-  const one = Object.assign({ id: newProfileId(), name: '默认' }, pickProfile(s));
+  const one = Object.assign({ id: newProfileId(), name: t('pfDefaultName', '默认') }, pickProfile(s));
   const fresh = { active: one.id, list: [one] };
   await chrome.storage.local.set({ profiles: fresh });
   return fresh;
