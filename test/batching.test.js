@@ -172,8 +172,11 @@ async function feed(videoId, n) {
 
   const s1 = sizes();
   check('确实发出了多批', s1.length >= 7, JSON.stringify(s1));
-  check('头三批还是基准的 20 行', s1.slice(0, 3).every((n) => n === 20), JSON.stringify(s1));
-  check('第 4 批起升到 30 行（20 × 1.5）', s1[3] === 30, JSON.stringify(s1));
+  /* 第一句还没有译文、用户正看着「···」：先切 6 句的小首批，一两秒就回来；
+     同一批剩下的 14 句紧跟着发。首批不参与升档，14 句那批照常算一批。 */
+  check('开头先发 6 句的小首批，同一批剩下的紧跟着发', s1[0] === 6 && s1[1] === 14, JSON.stringify(s1));
+  check('之后还是基准的 20 行', s1.slice(2, 4).every((n) => n === 20), JSON.stringify(s1));
+  check('连着三批干净（首批不算）就升到 30 行（20 × 1.5）', s1[4] === 30, JSON.stringify(s1));
   check('再干净三批就升到 40 行（20 × 2）', s1.includes(40), JSON.stringify(s1));
   check('40 行封顶，不会无限往上涨', s1.every((n) => n <= 40), JSON.stringify(s1));
 
@@ -188,15 +191,15 @@ async function feed(videoId, n) {
   runtimeReply = async (m) => {
     nth++;
     const r = await cleanReply(m);
-    if (nth === 4) r.split = 1;   // 第 4 批正好是刚升到 30 行的那一批
+    if (nth === 5) r.split = 1;   // 第 5 个请求（首批之后第 4 批）正好是刚升到 30 行的那一批
     return r;
   };
   await feed('B2', 500);
 
   const s2 = sizes();
-  check('出事的那一批确实是 30 行', s2[3] === 30, JSON.stringify(s2));
-  check('出事之后立刻回落到 20 行', s2[4] === 20, JSON.stringify(s2));
-  check('偶发一次不封顶，后面还能再升上去', s2.slice(5).some((n) => n > 20), JSON.stringify(s2));
+  check('出事的那一批确实是 30 行', s2[4] === 30, JSON.stringify(s2));
+  check('出事之后立刻回落到 20 行', s2[5] === 20, JSON.stringify(s2));
+  check('偶发一次不封顶，后面还能再升上去', s2.slice(6).some((n) => n > 20), JSON.stringify(s2));
 
   console.log('\n[2b] 连着两批错位：这才认定这一档不行，永久封顶');
   sent.length = 0;
@@ -204,17 +207,17 @@ async function feed(videoId, n) {
   runtimeReply = async (m) => {
     nth2++;
     const r = await cleanReply(m);
-    // 第 4 批是刚升到 30 行的那一批；紧接着的第 5 批（已回落到 20）再错一次
-    if (nth2 === 4 || nth2 === 5) r.split = 1;
+    // 第 5 个请求是刚升到 30 行的那一批；紧接着的第 6 个（已回落到 20）再错一次
+    if (nth2 === 5 || nth2 === 6) r.split = 1;
     return r;
   };
   await feed('B2b', 500);
 
   const s2b = sizes();
-  check('第 4 批是 30 行', s2b[3] === 30, JSON.stringify(s2b));
-  check('第 5 批已经回落到 20 行', s2b[4] === 20, JSON.stringify(s2b));
+  check('第 5 个请求是 30 行', s2b[4] === 30, JSON.stringify(s2b));
+  check('第 6 个请求已经回落到 20 行', s2b[5] === 20, JSON.stringify(s2b));
   // 末尾那一批是整条字幕剩下的零头，天然比档位小，所以是 <= 而不是 ==
-  check('连错两次之后从此再没升上去过', s2b.slice(5).every((n) => n <= 20), JSON.stringify(s2b));
+  check('连错两次之后从此再没升上去过', s2b.slice(6).every((n) => n <= 20), JSON.stringify(s2b));
 
   console.log('\n[2c] 中间隔了干净批次，两次错位不该累加');
   sent.length = 0;
@@ -222,13 +225,13 @@ async function feed(videoId, n) {
   runtimeReply = async (m) => {
     nth3b++;
     const r = await cleanReply(m);
-    if (nth3b === 4 || nth3b === 9) r.split = 1;   // 两次之间隔着好几批干净的
+    if (nth3b === 5 || nth3b === 10) r.split = 1;   // 两次之间隔着好几批干净的
     return r;
   };
   await feed('B2c', 500);
 
   const s2c = sizes();
-  check('两次都是偶发，最终仍能升上去', s2c.slice(10).some((n) => n > 20), JSON.stringify(s2c));
+  check('两次都是偶发，最终仍能升上去', s2c.slice(11).some((n) => n > 20), JSON.stringify(s2c));
 
   console.log('\n[3] 网络错误不该被当成「批次太大」');
   sent.length = 0;
@@ -277,6 +280,16 @@ async function feed(videoId, n) {
   const after = sizes().length;
   check('停稳之后照常翻当前位置', after > 0, '发了 ' + after + ' 个');
 
+  /* 最后落在 500 秒 = 第 250 句，正好在 [240, 259] 这一批的中间。原来要等模型把
+     整批 20 句（包括刚跳过的 240~249）翻完才一起回来；现在播放头前 2 句之前的切掉，
+     从这里起先发一个小首批。 */
+  const firstAfter = sent.filter((m) => m.type === 'translateBatch')[0];
+  const ids = firstAfter ? firstAfter.payload.lines.map((l) => l.id) : [];
+  check('停稳之后第一个请求从播放头前 2 句起', ids[0] === 248, JSON.stringify(ids));
+  check('而且是个小首批（前 2 句 + 往后 6 句）', ids.length === 8, JSON.stringify(ids));
+  check('刚跳过的 240~247 没有抢在前面', !sent.some((m) => m.type === 'translateBatch' &&
+        m.payload.lines.some((l) => l.id >= 240 && l.id < 248)), JSON.stringify(sizes()));
+
   console.log('\n[5] 限流：带退避时间的失败自己回到队列，不用人点重试');
   {
     /* 服务商的配额按分钟算。以前 429 之后这一批就是 err，字幕框写「翻译出错」，
@@ -289,6 +302,7 @@ async function feed(videoId, n) {
       if (limited < 2) { limited++; return { ok: false, error: 'HTTP 429: 慢一点', retryAfter: 2000 }; }
       return cleanReply(m);
     };
+    videoEl.currentTime = 0;              // [4] 把播放头留在了 500 秒，这条字幕只有 120 秒长
     sent.length = 0;
     await feed('B5', 60);
     const st1 = await ask();
@@ -317,6 +331,22 @@ async function feed(videoId, n) {
     const stx = await ask();
     check('最后老老实实报错，用户还能自己点重试', stx.status === 'error' && !!stx.error,
           JSON.stringify(stx));
+  }
+
+  console.log('\n[7] 从上次看到的地方续播：先翻播放头那里，不是视频开头');
+  {
+    /* 字幕到达时 schedule 先于 render 被调用，curIdx 还是 -1；两句之间的长静音里
+       它也是 -1。原来这两种情况都按第 0 句排批次 —— 续播到 20 分钟处，第一批请求
+       翻的却是片头，还占着并发名额。 */
+    runtimeReply = cleanReply;
+    videoEl.currentTime = 600;            // 每句 2 秒：第 300 句
+    sent.length = 0;
+    await feed('B7', 400);
+    const first = sent.filter((m) => m.type === 'translateBatch')[0];
+    const ids = first ? first.payload.lines.map((l) => l.id) : [];
+    check('第一个请求就在播放头附近', ids.length > 0 && ids[0] >= 290 && ids[0] <= 300, JSON.stringify(ids));
+    check('片头一句都没翻', !sent.some((m) => m.type === 'translateBatch' &&
+          m.payload.lines.some((l) => l.id < 250)), JSON.stringify(sizes()));
   }
 
   console.log(`\n结果：${pass} 通过 / ${fail} 失败`);

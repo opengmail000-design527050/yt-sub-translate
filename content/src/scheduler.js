@@ -4,7 +4,7 @@
  * 回来、配置错误当场认输），每一批都带着 (epoch, batchId) 好让 background 掐得住。
  */
 import { t } from '../../common.js';
-import { S, st, log, flags, updateStatus } from './state.js';
+import { S, st, log, flags, updateStatus, getVideo } from './state.js';
 import { wid } from './segments.js';
 import { cacheGet, cachePut, cacheKey, cacheIndexOp } from './cache.js';
 import { render, renderStatusChip } from './overlay.js';
@@ -146,19 +146,71 @@ export function schedule() {
    * 顺序播放时 curIdx 每次只 +1，跳变判定不成立，走不到这里。 */
   if (st.settleAt && Date.now() < st.settleAt) return;
   st.settleAt = 0;
-  const idx = st.curIdx >= 0 ? st.curIdx : 0;
+  const idx = playheadIndex();
   const limit = idx + Math.max(5, S.lookahead);
+  splitAtPlayhead(idx);
 
+  /* 先翻播放头所在的那批，再往后，最后才是播放头之前的。原来纯按位置从前往后排，
+   * 拖到一批中间时，排在最前面的恰恰是用户刚跳过去的那几句。 */
+  const rank = (b) => (b.from <= idx && idx <= b.to ? -1 : b.from < idx ? 1e9 - b.from : b.from);
   const candidates = st.batches
     .map((b, i) => ({ b, i }))
     .filter(({ b }) => b.state === 'idle' && b.to >= idx - 2 && b.from <= limit)
-    .sort((a, b) => a.b.from - b.b.from);
+    .sort((a, b) => rank(a.b) - rank(b.b));
 
   while (st.running < Math.max(1, S.concurrency) && candidates.length) {
     const { i } = candidates.shift();
     runBatch(i);
   }
   updateStatus();
+}
+
+/* 播放头在哪一句。curIdx 是渲染循环记下的，可它有两种时候是 -1：字幕刚到、渲染
+ * 还没跑过（schedule 就在这时被第一次调用），以及两句之间超过 1.2 秒的静音。
+ * 原来这两种情况都按第 0 句算 —— YouTube 打开长视频常常从上次看到的地方续播，
+ * 于是首批请求翻的是视频开头、还占满并发，真正该翻的位置排在后面；续播到两小时处，
+ * 每一次长停顿都会再去翻一遍开头。所以 -1 的时候照视频时间找下一句。 */
+function playheadIndex() {
+  if (st.curIdx >= 0) return st.curIdx;
+  const v = getVideo();
+  const time = v ? Number(v.currentTime) || 0 : 0;
+  const segs = st.segments;
+  let lo = 0, hi = segs.length - 1, ans = 0;
+  while (lo <= hi) {                       // 第一句 end > time 的
+    const mid = (lo + hi) >> 1;
+    if (segs[mid].end > time) { ans = mid; hi = mid - 1; } else lo = mid + 1;
+  }
+  return lo >= segs.length ? segs.length - 1 : ans;
+}
+
+/* 拖到一个还没翻过的地方时，别让用户干等一整批。
+ *
+ * 批次是按整条字幕预先切好的，一批 20～40 句。播放头落在一批中间时，原来要等模型
+ * 把整批 —— 包括播放头之前那些刚被跳过的句子 —— 全部译完才一起回来，实测拖动之后
+ * 要五六秒才出第一句中文。所以在播放头这里现切：
+ *   1. 播放头前 2 句（回退一点也有译文）之前的部分切出去，排到最后，多半不用翻；
+ *   2. 当前这句还没有译文（用户正在看着「···」）时，从这里起再切出一个小首批，
+ *      几句话一两秒就回来，剩下的照常并发跑。
+ * 正常顺序播放时预读早就跑在前面，当前句总有译文，第 2 步不会发生，
+ * 省 token 的大批次不受影响。多出来的代价是一次拖动多一次请求的固定开销。 */
+const HEAD_BEFORE = 2;
+const HEAD_LINES = 6;
+
+function splitBatch(bi, at, headFirst) {
+  const b = st.batches[bi];
+  st.batches.splice(bi, 1,
+    { from: b.from, to: at - 1, state: 'idle', tries: 0, head: !!headFirst },
+    { from: at, to: b.to, state: 'idle', tries: 0 });
+}
+
+export function splitAtPlayhead(idx) {
+  let bi = st.batches.findIndex((b) => b.from <= idx && idx <= b.to);
+  if (bi < 0 || st.batches[bi].state !== 'idle') return;
+  const cut = Math.max(0, idx - HEAD_BEFORE);
+  if (cut > st.batches[bi].from) { splitBatch(bi, cut); bi++; }
+  if (st.trans.has(idx)) return;
+  const end = idx + HEAD_LINES;
+  if (end <= st.batches[bi].to) splitBatch(bi, end, true);
 }
 
 /* 往前、往后各多数几句当参考。这里只管备齐候选，真正发多少由 background 按
@@ -249,6 +301,7 @@ export async function runBatch(bi) {
   /* epoch 和批次编号一起送过去：background 按 (标签页, epoch, 批次) 登记这次请求，
    * 切视频时按 epoch 一次掐掉一整版，兜底超时时按批次编号点名掐一个。 */
   const batchId = ++st.batchSeq;
+  const sentAt = Date.now();
   let res = null, err = '';
   try {
     res = await withDeadline(chrome.runtime.sendMessage({
@@ -288,10 +341,14 @@ export async function runBatch(bi) {
     /* split > 0 = 后端因为错位对半重来过；dropped 非空 = 有行到底也没翻出来。
      * 两者都说明这一批给大了。repaired > 0 是模型留了空、补翻救回来了，
      * 对齐没坏，但也不算干净，只是不再往上加档。 */
-    noteBatchResult(
-      Number(res.split || 0) > 0 || (res.dropped && res.dropped.length > 0),
-      !res.split && !(res.dropped && res.dropped.length) && !res.repaired
-    );
+    const bad = Number(res.split || 0) > 0 || (res.dropped && res.dropped.length > 0);
+    /* 拖动后切出来的小首批：几句话翻得整齐不说明大批次也行，不拿它来升档；
+       可要是连几句都错位了，那是实打实的证据，照常回落。 */
+    if (!b.head || bad) {
+      noteBatchResult(bad, !res.split && !(res.dropped && res.dropped.length) && !res.repaired);
+    }
+    log('批次 #' + batchId + ' ' + lines.length + ' 句' + (b.head ? '（首批）' : '') + ' ' +
+        ((Date.now() - sentAt) / 1000).toFixed(1) + 's');
     let got = 0;
     for (const k in res.map) {
       const id = Number(k);
