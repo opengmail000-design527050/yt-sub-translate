@@ -33,7 +33,8 @@ const COPY = [
   'icons',
   '_locales'
 ];
-const SKIP = /(^|\/)(make-icons\.js|\.DS_Store|.*\.map)$/;
+/* 图标的源文件（SVG 和生成脚本）不进包：扩展只认 PNG。 */
+const SKIP = /(^|\/)(make-icons\.m?js|.*\.svg|\.DS_Store|.*\.map)$/;
 
 const rel = (p) => p.split(path.sep).join('/');
 

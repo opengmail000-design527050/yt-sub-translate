@@ -14,7 +14,7 @@ const shared = {
 };
 
 export default [
-  { ignores: ['node_modules/**', 'dist/**'] },
+  { ignores: ['node_modules/**', 'dist/**', 'build/**'] },
   js.configs.recommended,
   {
     // 扩展本体：浏览器 + chrome.*
@@ -49,7 +49,7 @@ export default [
   },
   {
     // 测试与工具脚本跑在 node 里
-    files: ['test/**/*.js', 'test/**/*.mjs', 'tools/**/*.mjs', 'icons/**/*.js'],
+    files: ['test/**/*.js', 'test/**/*.mjs', 'tools/**/*.mjs', 'icons/**/*.mjs'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'commonjs',
@@ -67,13 +67,13 @@ export default [
   },
   {
     // .mjs 是真模块：tools 下的构建脚本，和直接 import 模块的那些单测
-    files: ['tools/**/*.mjs', 'test/**/*.mjs'],
+    files: ['tools/**/*.mjs', 'test/**/*.mjs', 'icons/**/*.mjs'],
     languageOptions: { sourceType: 'module' }
   },
   {
     /* 端到端测试里有几段是丢进浏览器里跑的（page.evaluate 的回调），
        那里面的 document / window / chrome 是页面的，不是 node 的。 */
-    files: ['test/e2e/**/*.mjs', 'tools/shots.mjs'],
+    files: ['test/e2e/**/*.mjs', 'tools/shots.mjs', 'icons/make-icons.mjs'],
     languageOptions: {
       globals: { document: 'readonly', window: 'readonly', chrome: 'readonly' }
     }

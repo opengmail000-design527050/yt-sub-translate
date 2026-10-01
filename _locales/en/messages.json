@@ -497,7 +497,7 @@
     "message": "Sturdiest strokes — safest at small sizes or low quality."
   },
   "fontKaiNote": {
-    "message": "Handwritten feel with thin strokes; pair with a large size and a dark backdrop."
+    "message": "Handwritten feel with thin strokes; pair with a large size and a dark backdrop. Falls back to a Song face when no Kaiti font is installed (on Linux, install LXGW WenKai)."
   },
   "densityCompactNote": {
     "message": "Shortest box; long sentences get chopped a bit."
@@ -642,5 +642,17 @@
   },
   "statOldest": {
     "message": "oldest entry last used $1 days ago"
+  },
+  "spentTokens": {
+    "message": "This video: $1 tokens so far"
+  },
+  "spentTip": {
+    "message": "$1 in / $2 out · $3 batches"
+  },
+  "spentNoUsage": {
+    "message": "This video: $1 batches (provider does not report usage)"
+  },
+  "spentFromCache": {
+    "message": "This video: no tokens spent yet, every line so far came from the cache"
   }
 }

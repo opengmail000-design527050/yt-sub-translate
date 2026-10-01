@@ -48,6 +48,7 @@ export const st = {
   batchClean: 0,           // 连续几批干干净净了
   batchDirty: 0,           // 连续几批出了错位（连着两批才封顶，见 noteBatchResult）
   running: 0,
+  spent: { prompt: 0, completion: 0, batches: 0 },   // 这个视频在本页花掉的 token，弹窗里显示
   batchSeq: 0,             // 每发出一批就给它一个编号，兜底超时时按它点名取消
   status: 'idle',          // idle | waiting | ready | translating | error | nosub | unsupported
   error: '',               // 出错的原话（服务商说了什么），照实给用户看

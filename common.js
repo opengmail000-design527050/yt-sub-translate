@@ -78,12 +78,82 @@ export const NAME_TO_CODE = (() => {
 })();
 
 /* 字体栈。content 的字幕框和设置页的预览必须是同一份，
- * 否则预览里挑好的字体，到了播放器上是另一种。 */
+ * 否则预览里挑好的字体，到了播放器上是另一种。
+ *
+ * Linux 上的名字要单独写。发行版装的 Noto CJK 叫「Noto Serif CJK SC」，不叫「Noto Serif SC」
+ * （后者是 Google Fonts 上那份拆开的），而 Chrome 只认字体的确切名字 —— 原来那份栈在 Linux
+ * 上一个中文字体都对不上，汉字落到系统默认的黑体：选了「雅致衬线」，英文是衬线，中文却是
+ * 黑体。Georgia 在 Linux 上也没有，拉丁字母同样掉到系统默认，所以把 Noto Serif 写在前面。
+ * 楷体 Linux 上通常没装，霞鹜文楷（LXGW WenKai）是最常见的开源楷体，有就用它。 */
 export const FONT_STACKS = {
-  serif: '"Georgia", "Iowan Old Style", "Palatino Linotype", Constantia, "Noto Serif SC", "Source Han Serif SC", "Songti SC", STSong, serif',
-  sans: '"Inter", "Helvetica Neue", -apple-system, "Segoe UI", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif',
-  kai: '"Constantia", "Cambria", Georgia, "Kaiti SC", STKaiti, KaiTi, "Noto Serif SC", serif'
+  serif: '"Georgia", "Iowan Old Style", "Palatino Linotype", Constantia, "Noto Serif", "Noto Serif SC", "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", STSong, serif',
+  sans: '"Inter", "Helvetica Neue", -apple-system, "Segoe UI", "Noto Sans", "Noto Sans SC", "Noto Sans CJK SC", "Source Han Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif',
+  kai: '"Constantia", "Cambria", Georgia, "Noto Serif", "LXGW WenKai", "LXGW WenKai Screen", "Kaiti SC", STKaiti, KaiTi, "AR PL UKai CN", "Noto Serif SC", "Noto Serif CJK SC", serif'
 };
+
+/* ------------------------------------------------------------------ *
+ * 中日文按词折行
+ *
+ * 汉字之间处处可断，浏览器折行时只看宽度，于是「所以我一直绕回来的那个问 / 题是」——
+ * 一个词被劈成两半，而且 text-wrap: balance 把两行拉匀之后，劈在词中间的概率反而更高。
+ * 字幕组的排法是断在词与词之间。
+ *
+ * 做法：Intl.Segmenter 按词切开，词与词之间插 <wbr>，再配上 CSS 的 word-break: keep-all
+ * （汉字之间不再自动给断点，只剩我们给的那些和标点）。<wbr> 不是字符，选中复制出来的
+ * 文字跟原文一字不差；换成零宽空格的话，复制出去会夹带看不见的字符。
+ *
+ * 断点只放在「下一段是词」的地方：<wbr> 的效果跟零宽空格一样，会压过「逗号不许出现在
+ * 行首」那条规矩，所以标点一律粘在前一个词上，左引号、左括号粘在后一个词上。
+ * ------------------------------------------------------------------ */
+const HAN_KANA = /[぀-ヿ㐀-䶿一-鿿豈-﫿]/;
+const KANA = /[぀-ヿ]/;
+const OPENERS = /[「『（《〈【〔“‘([{]$/;
+const segmenters = {};
+
+function segmenterFor(loc) {
+  if (!(loc in segmenters)) {
+    try { segmenters[loc] = new Intl.Segmenter(loc, { granularity: 'word' }); }
+    catch (_) { segmenters[loc] = null; }
+  }
+  return segmenters[loc];
+}
+
+/** 中日文切成「可以在其间折行」的几段；不含汉字假名、或者切不了时返回 null。 */
+export function wordChunks(text) {
+  const s = String(text || '');
+  if (!HAN_KANA.test(s)) return null;
+  const seg = segmenterFor(KANA.test(s) ? 'ja' : 'zh');
+  if (!seg) return null;
+  const out = [];
+  for (const p of seg.segment(s)) {
+    const cur = out.length ? out[out.length - 1] : '';
+    if (out.length && p.isWordLike && !OPENERS.test(cur)) out.push(p.segment);
+    else if (out.length) out[out.length - 1] = cur + p.segment;
+    else out.push(p.segment);
+  }
+  return out.length > 1 ? out : null;
+}
+
+/** 把 text 填进 el，中日文按词给断点。返回是否用上了按词折行（调用方据此挂 keep-all）。 */
+export function fillWrapped(el, text) {
+  const parts = wordChunks(text);
+  let nodes = null;
+  if (parts) {
+    try {
+      // 节点先造齐再换上去：中途出了岔子，el 里原来的内容还在，退回纯文本就是了
+      const doc = el.ownerDocument || document;
+      nodes = [];
+      parts.forEach((p, i) => {
+        if (i) nodes.push(doc.createElement('wbr'));
+        nodes.push(doc.createTextNode(p));
+      });
+    } catch (_) { nodes = null; }
+  }
+  if (!nodes) { el.textContent = String(text || ''); return false; }
+  el.textContent = '';
+  for (const n of nodes) el.appendChild(n);
+  return true;
+}
 
 /* ------------------------------------------------------------------ *
  * 界面语言

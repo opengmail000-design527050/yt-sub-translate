@@ -62,6 +62,7 @@ const BASE = [
   ['连续对话、保持语域',          /Consecutive lines of one conversation/],
   ['不许把口语写成书面语',        'do not make casual speech sound formal'],
   ['自然简洁、一眼读完',          /natural, concise .* reads at a glance/],
+  ['删掉不带意思的口头禅',         /drop verbal fillers, stutters and false starts .* that carry no meaning/],
   ['专名与缩写保持原样',          /Keep proper nouns, product names and established English acronyms/],
   ['标题只作领域线索、不许翻',     /Video title, for domain terminology only/]
 ];
@@ -95,6 +96,21 @@ console.log('[3] 有标点的轨不该白花这几句的 token');
 {
   const p = build(false);
   for (const [name, rule] of ASR) ok('不含：' + name, !has(p, rule), p);
+}
+
+console.log('');
+console.log('[4] 每个视频都不一样的标题排在最后，前缀缓存才命中得了前面那些');
+{
+  const p = build(true).split(NL);
+  ok('标题是最后一行', /^Video title/.test(p[p.length - 1]), p[p.length - 1]);
+  const withExtra = ctx.__m.buildSystemPrompt({ targetLang: '简体中文', extraPrompt: 'Use 您.' }, 'en', true, 'T').split(NL);
+  ok('附加要求排在标题前面', withExtra.indexOf('Use 您.') >= 0 && withExtra.indexOf('Use 您.') < withExtra.length - 1,
+     JSON.stringify(withExtra.slice(-2)));
+  const a = ctx.__m.buildSystemPrompt({ targetLang: '简体中文', extraPrompt: '' }, 'en', true, 'Video A');
+  const b = ctx.__m.buildSystemPrompt({ targetLang: '简体中文', extraPrompt: '' }, 'en', true, 'Video B');
+  const same = (() => { let i = 0; while (i < a.length && a[i] === b[i]) i++; return i; })();
+  ok('换个视频，只有最后一行不一样', a.slice(0, same).split(NL).length === a.split(NL).length,
+     '公共前缀到第 ' + a.slice(0, same).split(NL).length + ' 行');
 }
 
 console.log('');

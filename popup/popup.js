@@ -261,6 +261,7 @@ async function refreshStatus() {
   if (!tabId) {
     $('statusText').textContent = offsiteText();
     $('dot').removeAttribute('data-s');
+    hideProgress();
     return;
   }
   let r = null;
@@ -281,7 +282,7 @@ async function refreshStatus() {
       ? t('srcMissing', '缺少：$1　·　等插件更新', [miss])
       : t('srcWaitUpdate', '等插件更新');
     $('srcText').classList.remove('hidden');
-    $('barFill').style.width = '0%';
+    hideProgress();
     $('errText').classList.add('hidden');
     $('retryBtn').classList.add('hidden');
     $('fixBtn').classList.add('hidden');
@@ -296,7 +297,7 @@ async function refreshStatus() {
     $('dot').removeAttribute('data-s');
     $('videoTitle').textContent = r.title || '';
     $('srcText').classList.add('hidden');
-    $('barFill').style.width = '0%';
+    hideProgress();
     $('errText').classList.add('hidden');
     $('retryBtn').classList.add('hidden');
     $('fixBtn').classList.add('hidden');
@@ -330,7 +331,9 @@ async function refreshStatus() {
   $('dot').dataset.s = r.active ? r.status : '';
   $('videoTitle').textContent = r.title || '';
   paintSource(r);
+  $('bar').classList.toggle('hidden', !(r.active && r.segments));
   $('barFill').style.width = r.segments ? Math.round((r.translated / r.segments) * 100) + '%' : '0%';
+  paintSpent(r);
 
   const hasErr = !!r.error;
   const info = ERROR_INFO[r.errorCode] || null;
@@ -342,6 +345,41 @@ async function refreshStatus() {
   $('fixBtn').textContent = fix ? FIX_TEXT[fix]() : '';
   $('fixBtn').classList.toggle('hidden', !(hasErr && fix));
   $('purgeBtn').classList.toggle('hidden', !(r.active && r.segments > 0));
+}
+
+function hideProgress() {
+  $('bar').classList.add('hidden');
+  $('barFill').style.width = '0%';
+  $('spentText').classList.add('hidden');
+}
+
+/* 这个视频（在这个页面里）花了多少。
+ *
+ * 底栏那个「累计」是全部视频加起来的总账，回答不了「这一期花了多少」—— 而后者才是
+ * 判断「推理开到低值不值」「换个便宜模型划不划算」时要的那个数。
+ * 三种情况说法不同，不能混：
+ *   花了 token          写多少，悬停看进出各多少、几批
+ *   服务商不回报 usage   只能写翻了几批，不能拿 0 冒充「没花钱」
+ *   一批都没发          重看的视频，屏幕上的译文都是缓存里的，这才是真的没花钱
+ * 用自带字幕的那种 paintSource 已经说过「没花 token」了，这里不重复。 */
+function paintSpent(r) {
+  const el = $('spentText');
+  const sp = r.spent || null;
+  let text = '';
+  el.title = '';
+  if (r.active && r.segments && sp && !r.adopted) {
+    const tokens = Number(sp.prompt || 0) + Number(sp.completion || 0);
+    if (tokens > 0) {
+      text = t('spentTokens', '本视频已花 $1 tokens', [fmt(tokens)]);
+      el.title = t('spentTip', '输入 $1 / 输出 $2 · $3 批', [fmt(sp.prompt || 0), fmt(sp.completion || 0), String(sp.batches || 0)]);
+    } else if (sp.batches > 0) {
+      text = t('spentNoUsage', '本视频翻了 $1 批（服务商没回报用量）', [String(sp.batches)]);
+    } else if (r.translated > 0) {
+      text = t('spentFromCache', '本视频还没花 token：已有的译文都来自缓存');
+    }
+  }
+  el.textContent = text;
+  el.classList.toggle('hidden', !text);
 }
 
 const baseLang = (c) => String(c || '').toLowerCase().split('-')[0];

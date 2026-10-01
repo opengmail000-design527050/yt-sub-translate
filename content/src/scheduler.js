@@ -145,6 +145,15 @@ export function schedule() {
    *
    * 顺序播放时 curIdx 每次只 +1，跳变判定不成立，走不到这里。 */
   if (st.settleAt && Date.now() < st.settleAt) return;
+  /* 标签页在后台：没有人在看字幕，一句都不翻。
+   *
+   * 原来靠「播放头」自然刹车 —— 后台标签页里 requestAnimationFrame 停了，curIdx 停在切走
+   * 那一刻，预读翻满 lookahead 就不再往前。可 curIdx 是 -1 的时候（字幕刚到、或者切走时
+   * 正好落在两句之间超过 1.2 秒的停顿里），playheadIndex 改看视频的真实时间，于是后台
+   * 一边放一边翻：把三小时的播客放在后台当电台听，整期都会被翻一遍，而一句都没人看。
+   * 在后台标签页里打开的视频（中键 / Ctrl+点击）也一样，还没点开就先付了前三批的钱。
+   * 切回来时 visibilitychange 会立刻接上（见 index.js），当前句先发一个小首批，一两秒就有。 */
+  if (document.visibilityState === 'hidden') return;
   st.settleAt = 0;
   const idx = playheadIndex();
   const limit = idx + Math.max(5, S.lookahead);
@@ -301,6 +310,7 @@ export async function runBatch(bi) {
    * 切视频时按 epoch 一次掐掉一整版，兜底超时时按批次编号点名掐一个。 */
   const batchId = ++st.batchSeq;
   const sentAt = Date.now();
+  const vid = st.videoId;
   let res = null, err = '';
   try {
     res = await withDeadline(chrome.runtime.sendMessage({
@@ -319,6 +329,11 @@ export async function runBatch(bi) {
   }
 
   st.running--;   // 名额先还回去，不管这批还算不算数
+
+  /* 这一批花掉的 token 记到这个视频头上，弹窗里给人看。要在下面的 epoch 闸门之前记：
+   * 结果作废了（改了设置、换了字幕轨），钱可是已经花出去了。只有切到别的视频时不记 ——
+   * 那是上一个视频的账。 */
+  if (vid === st.videoId) noteSpent(res);
 
   /* 等待期间切了视频、改了模型/目标语言、或重新切过句：这批结果已经不对应当前状态。
    * 直接丢弃 —— 尤其不能写缓存，st.segments 可能已经是另一个视频的，
@@ -395,6 +410,17 @@ export async function runBatch(bi) {
   render();
   updateStatus();
   schedule();
+}
+
+/* 批数和 token 分开记：有些服务商不回报 usage，那时弹窗只能说「翻了几批」，
+ * 不能因为 token 是 0 就说成「没花钱、都来自缓存」。 */
+function noteSpent(res) {
+  if (!res) return;
+  if (res.ok) st.spent.batches += 1;
+  const u = res.usage;
+  if (!u) return;
+  st.spent.prompt += Number(u.prompt_tokens || u.input_tokens || 0);
+  st.spent.completion += Number(u.completion_tokens || u.output_tokens || 0);
 }
 
 /* 限流不该变成一条要用户去点的红字。

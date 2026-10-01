@@ -292,6 +292,36 @@ const itemText = (b) => b._kids.map((k) => k.textContent).join(' · ') || b.text
   check('没出错时按钮都收起来', !shown('errText') && !shown('retryBtn') && !shown('fixBtn'));
 
   /* ---------------------------------------------------------------- *
+   * [8b] 这个视频花了多少：三种情况三种说法，不能拿 0 冒充「没花钱」
+   * ---------------------------------------------------------------- */
+  console.log('\n[8b] 本视频花费');
+  await say({ onYoutube: true, active: true, status: 'ready', segments: 10, translated: 10, error: '',
+              spent: { prompt: 2400, completion: 900, batches: 3 } });
+  check('花了 token 就写多少', shown('spentText') && $('spentText').textContent.includes('3.3k'),
+        $('spentText').textContent);
+  check('悬停看得到进出各多少、几批', $('spentText').title.includes('2.4k') && $('spentText').title.includes('900') &&
+        $('spentText').title.includes('3'), $('spentText').title);
+  check('有句子时进度条在', shown('bar'));
+
+  await say({ onYoutube: true, active: true, status: 'ready', segments: 10, translated: 10, error: '',
+              spent: { prompt: 0, completion: 0, batches: 2 } });
+  check('服务商不回报 usage：只说翻了几批，不说没花钱',
+        $('spentText').textContent.includes('2 批') && !$('spentText').textContent.includes('缓存'),
+        $('spentText').textContent);
+
+  await say({ onYoutube: true, active: true, status: 'ready', segments: 10, translated: 10, error: '',
+              spent: { prompt: 0, completion: 0, batches: 0 } });
+  check('一批都没发、却有译文：那是缓存', $('spentText').textContent.includes('缓存'), $('spentText').textContent);
+
+  await say({ onYoutube: true, active: true, status: 'ready', segments: 10, translated: 10, error: '',
+              adopted: 'zh-Hans', spent: { prompt: 0, completion: 0, batches: 0 } });
+  check('用的是自带字幕时这行不出现（上面那行已经说过没花 token）', !shown('spentText'), $('spentText').textContent);
+
+  await say({ onYoutube: true, active: false, status: 'idle', segments: 0, translated: 0, error: '',
+              spent: { prompt: 0, completion: 0, batches: 0 } });
+  check('没开翻译时进度条和花费都收起来', !shown('bar') && !shown('spentText'));
+
+  /* ---------------------------------------------------------------- *
    * [9] 没有字幕轨时，说的是真正识别出来的那个语言
    * ---------------------------------------------------------------- */
   console.log('\n[9] 没有字幕轨');

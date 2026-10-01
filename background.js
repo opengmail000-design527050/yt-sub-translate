@@ -164,19 +164,27 @@ function buildSystemPrompt(s, sourceLang, noPunct, title) {
     `Input: lines of "<n>|<text>". Output exactly one "<n>|<translation>" per input line — same numbers, same order, same count, nothing else. No markdown, no notes, never an empty or missing line.`,
     `CRITICAL: each line appears on screen alone at its own timestamp. Keep every line's meaning inside its own line — never carry content forward into a later line or pull it back from an earlier one, even when natural ${lang} word order differs. A sentence fragment stays a fragment; do not complete it.`,
     `Consecutive lines of one conversation between hosts and guests: keep each speaker's spoken register and tone, and do not make casual speech sound formal.`,
-    `Write natural, concise ${lang} that reads at a glance as a subtitle. Keep proper nouns, product names and established English acronyms (AI, GPU, LLM, API) unchanged.`
+    /* 口头禅那半句是后加的。长访谈的原文里满是 you know / I mean / like / I, I think，
+       逐字翻出来就是「你知道的，我的意思是，就像，我，我觉得」—— 中文字幕最一眼就露馅的
+       机翻味，而且全是输出 token，输出的单价是输入的好几倍。只删「不带意思」的那些：
+       like 当动词、you know 真在问对方的时候照翻。 */
+    `Write natural, concise ${lang} that reads at a glance as a subtitle: drop verbal fillers, stutters and false starts (um, uh, you know, I mean, like) that carry no meaning. Keep proper nouns, product names and established English acronyms (AI, GPU, LLM, API) unchanged.`
   ];
-  /* 视频标题。同一个 agent / trait / model，在 AI 播客里和在 Rust 教程里根本不是
-     一回事，而光看一批二十句常常判断不出领域。框架文字压到 20 token，加上标题本身
-     常见是 25~40 —— 而且它待在系统提示里，不跟待翻的行挨着，不会被误当成输入。 */
-  const vt = safeTitle(title);
-  if (vt) lines.push(`Video title, for domain terminology only — never translate or output it: "${vt}"`);
 
   /* 自动字幕：没有标点、没有大写、偶尔听错词。不说清楚的话，模型会把
      "i think its the case that" 这种东西照着字面硬翻，读起来像机器吐的。
      只在真的没标点时才加这几句 —— 有标点的轨不必为此多花 token。 */
   if (noPunct) lines.push(...asrLines(lang));
   if (s.extraPrompt && s.extraPrompt.trim()) lines.push(s.extraPrompt.trim());
+
+  /* 视频标题。同一个 agent / trait / model，在 AI 播客里和在 Rust 教程里根本不是
+     一回事，而光看一批二十句常常判断不出领域。框架文字压到 20 token，加上标题本身
+     常见是 25~40 —— 而且它待在系统提示里，不跟待翻的行挨着，不会被误当成输入。
+     放在最后一行是为了前缀缓存：DeepSeek 这类服务商按前缀命中，越靠前越要放每次都
+     一样的东西。标题每个视频都不同，放中间的话后面那几句（自动字幕提示、附加要求）
+     跨视频就一次也命中不了。 */
+  const vt = safeTitle(title);
+  if (vt) lines.push(`Video title, for domain terminology only — never translate or output it: "${vt}"`);
   return lines.join('\n');
 }
 

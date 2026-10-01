@@ -265,6 +265,7 @@ export function resetVideo(data) {
   st.segments = [];
   st.trans = new Map();
   st.dropped = new Set();
+  st.spent = { prompt: 0, completion: 0, batches: 0 };
   resetTier();
   st.batches = [];
   st.curIdx = -1;

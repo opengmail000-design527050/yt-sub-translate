@@ -16,7 +16,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 13.5px/1.6 "PingFang SC", "Microsoft YaHei", "Noto Sans SC", -apple-system, Segoe UI, sans-serif;
+  font: 13.5px/1.6 "Inter", -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", "Noto Sans CJK SC", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -285,6 +285,7 @@ button.arming { color: #d98b8b; border-color: #6b4040; background: #241a1a; }
   background-color: rgba(0, 0, 0, .55);
 }
 .preview .pv-orig, .preview .pv-trans { text-wrap: balance; }
+.preview .pv-cjk { word-break: keep-all; overflow-wrap: break-word; }   /* 与 overlay.css 的 .ytst-cjk 一致 */
 .preview .pv-orig {
   font-weight: 400;
   letter-spacing: .2px;

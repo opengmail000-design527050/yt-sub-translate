@@ -17,7 +17,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 13px/1.5 "PingFang SC", "Microsoft YaHei", "Noto Sans SC", -apple-system, Segoe UI, sans-serif;
+  font: 13px/1.5 "Inter", -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", "Noto Sans CJK SC", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -98,10 +98,16 @@ body {
 }
 .bar {
   margin-top: 10px;
-  height: 2px;
+  height: 3px;
   background: #232427;
-  border-radius: 2px;
+  border-radius: 3px;
   overflow: hidden;
+}
+.spent {
+  margin-top: 7px;
+  font-size: 10.5px;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
 }
 .bar span {
   display: block; height: 100%; width: 0%;

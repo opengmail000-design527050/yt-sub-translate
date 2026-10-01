@@ -1,8 +1,8 @@
 /* 叠加层：字幕框本身 —— 渲染、字号随画面缩放、拖动与调宽、选中复制、
- * 别被控制栏压住，以及播放器右下角那个「译」按钮。
+ * 别被控制栏压住。
  * 这个模块是唯一碰 DOM 的地方。
  */
-import { DEFAULTS, FONT_STACKS, t } from '../../common.js';
+import { DEFAULTS, FONT_STACKS, t, fillWrapped, resolveTargetCode } from '../../common.js';
 import { S, st, clamp, getVideo, getPlayerEl, patchSettings } from './state.js';
 import { schedule, SEEK_JUMP, SEEK_SETTLE } from './scheduler.js';
 
@@ -211,8 +211,18 @@ function selectionInBox() {
 
 function setText(el, text) {
   if (el.textContent === text) return false;   // 不无谓重写，否则选中会被清掉
-  el.textContent = text;
+  // 中日文按词给断点（见 common.js 的 fillWrapped），用上了才挂 keep-all
+  el.classList.toggle('ytst-cjk', fillWrapped(el, text));
   return true;
+}
+
+/* 标上语言。同一个汉字，简中、繁中、日文的字形不一样：页面是英文 YouTube 时，
+ * 字体回退会按页面语言去挑，中文译文可能拿到日文字形。标上 lang，浏览器才知道
+ * 这一行是哪种中文。 */
+function setLang(el, code) {
+  const want = String(code || '');
+  if ((el.getAttribute('lang') || '') === want) return;
+  if (want) el.setAttribute('lang', want); else el.removeAttribute('lang');
 }
 
 /* ---------- 宽度贴合实际折行结果 ---------- */
@@ -224,8 +234,19 @@ function widestLine(el) {
   try {
     const r = document.createRange();
     r.selectNodeContents(el);
+    /* 按词折行之后一行里有好几个文本节点，getClientRects 是一个节点一段一个矩形 ——
+     * 直接取最宽的那个，量出来的是最长的那个词，框会缩到一个词那么窄。
+     * 所以先按纵向位置把矩形归到各自那一行，再量每一行从最左到最右有多宽。 */
+    const lines = [];
+    for (const rect of r.getClientRects()) {
+      if (!rect.width) continue;
+      const mid = rect.top + rect.height / 2;
+      const ln = lines.find((l) => mid > l.top && mid < l.bottom);
+      if (ln) { ln.left = Math.min(ln.left, rect.left); ln.right = Math.max(ln.right, rect.right); }
+      else lines.push({ top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right });
+    }
     let m = 0;
-    for (const rect of r.getClientRects()) m = Math.max(m, rect.width);
+    for (const l of lines) m = Math.max(m, l.right - l.left);
     return m;
   } catch (_) { return 0; }
 }
@@ -345,6 +366,8 @@ export function render() {
 
   const seg = st.segments[idx];
   const tr = st.trans.get(idx);
+  setLang(elOrig, st.sourceLang);
+  setLang(elTrans, tr ? resolveTargetCode(S) : '');
   let changed = setText(elOrig, seg.text);
 
   if (tr) {
@@ -359,6 +382,8 @@ export function render() {
   } else {
     changed = setText(elTrans, st.error ? t('boxError', '· 翻译出错，点插件图标查看 ·') : '···') || changed;
     elTrans.classList.add('ytst-pending');
+    // 「正在翻」的省略号会呼吸，出错的那句话不该跟着闪
+    elTrans.classList.toggle('ytst-err', !!st.error);
     overlay.classList.remove('ytst-no-trans');
   }
 

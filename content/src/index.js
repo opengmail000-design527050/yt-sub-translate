@@ -63,6 +63,7 @@ import { inject, post2page, wirePage } from './bridge.js';
     segments: st.segments.length,
     translated: st.trans.size,
     running: st.running,
+    spent: st.spent,
     hasTracks: st.tracks.length > 0
   });
 
@@ -204,7 +205,14 @@ import { inject, post2page, wirePage } from './bridge.js';
   window.addEventListener('beforeunload', saveCacheNow);
   window.addEventListener('pagehide', saveCacheNow);
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') saveCacheNow();
+    if (document.visibilityState === 'hidden') { saveCacheNow(); return; }
+    /* 切回来了。后台那段时间 schedule 一直按兵不动（见 scheduler 里那段注释），这里立刻
+     * 接上。curIdx 先清掉：它还停在切走那一刻，不清的话渲染循环一恢复就看见播放头
+     * 「跳」了几十句，当成拖进度条，白等 1.2 秒才开始翻。 */
+    if (!st.active) return;
+    st.curIdx = -1;
+    st.settleAt = 0;
+    schedule();
   });
 
   // 测试用出口：只有测试桩会预先把这个键设成对象，页面里永远是 undefined

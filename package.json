@@ -12,6 +12,7 @@
     "e2e": "npm run build && node test/e2e/smoke.mjs",
     "shots": "npm run build && node tools/shots.mjs",
     "keygen": "node tools/keygen.mjs",
+    "icons": "node icons/make-icons.mjs",
     "check": "npm run lint && npm test"
   },
   "devDependencies": {

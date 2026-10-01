@@ -93,12 +93,23 @@
   margin-bottom: 0;
 }
 
+/* 还没有译文：粉色省略号慢慢呼吸，告诉人「在翻，不是坏了」。出错时那句提示不闪 */
 #ytst-overlay .ytst-trans.ytst-pending {
   color: #f3cfda;
   opacity: .8;
   letter-spacing: 3px;
   font-weight: 400;
+  animation: ytst-breathe 1.6s ease-in-out infinite;
 }
+#ytst-overlay .ytst-trans.ytst-pending.ytst-err {
+  letter-spacing: .6px;
+  animation: none;
+}
+@keyframes ytst-breathe { 0%, 100% { opacity: .35; } 50% { opacity: .9; } }
+
+/* 中日文按词折行（见 common.js 的 fillWrapped）：汉字之间不再自动给断点，只剩
+   词与词之间的 <wbr> 和标点。万一一个「词」比整行还宽，才退回随处可断，免得撑破框 */
+#ytst-overlay .ytst-cjk { word-break: keep-all; overflow-wrap: break-word; }
 
 #ytst-overlay.ytst-trans-only .ytst-orig { display: none; }
 

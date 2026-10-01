@@ -349,6 +349,56 @@ async function feed(videoId, n) {
           m.payload.lines.some((l) => l.id < 250)), JSON.stringify(sizes()));
   }
 
+  console.log('\n[8] 标签页在后台：一句都不翻，切回来立刻接上');
+  {
+    /* 后台标签页里没人看字幕。原来靠「播放头停住」自然刹车，可 curIdx 是 -1 的时候
+       （字幕刚到、或者切走时正好落在长停顿里）调度改看视频的真实时间 —— 把播客放在
+       后台当电台听，整期都会被翻一遍。在后台打开的视频也一样，还没点开就先付了钱。 */
+    runtimeReply = cleanReply;
+    videoEl.currentTime = 300;            // 每句 2 秒：第 150 句
+    doc.visibilityState = 'hidden';
+    sent.length = 0;
+    await feed('B8', 400);
+    for (let i = 0; i < 4; i++) {          // 后台继续往下放，2 秒一轮的定时调度照样会来
+      videoEl.currentTime += 60;
+      await sleep(60);
+    }
+    check('后台期间一个翻译请求都没发', sizes().length === 0, '发了 ' + sizes().length + ' 批');
+    const stHidden = await ask();
+    check('状态没有因此报错', !stHidden.error, String(stHidden.error));
+
+    doc.visibilityState = 'visible';
+    (listeners.document.visibilitychange || []).forEach((f) => f());
+    await sleep(120);
+    const first = sent.filter((m) => m.type === 'translateBatch')[0];
+    const ids = first ? first.payload.lines.map((l) => l.id) : [];
+    check('切回来马上开始翻，不用等拖动判定的 1.2 秒', ids.length > 0, JSON.stringify(sizes()));
+    // 播放头在 540 秒 = 第 270 句
+    check('从现在的播放头翻起，不是切走那一刻', ids[0] >= 260 && ids[0] <= 270, JSON.stringify(ids));
+  }
+
+  console.log('\n[9] 每个视频花了多少 token 记在页面状态里，弹窗拿去显示');
+  {
+    runtimeReply = async (m) => {
+      const r = await cleanReply(m);
+      r.usage = { prompt_tokens: 100, completion_tokens: 40 };
+      return r;
+    };
+    videoEl.currentTime = 0;
+    sent.length = 0;
+    await feed('B9', 60);
+    const s9 = await ask();
+    const n = sizes().length;
+    check('按批累加', s9.spent && s9.spent.batches === n && s9.spent.prompt === 100 * n && s9.spent.completion === 40 * n,
+          JSON.stringify(s9.spent) + ' / ' + n + ' 批');
+
+    runtimeReply = cleanReply;             // 换一个不回报 usage 的服务商
+    await feed('B9b', 60);
+    const s9b = await ask();
+    check('换视频从零记起；不回报 usage 时批数照记、token 记 0',
+          s9b.spent.batches > 0 && s9b.spent.prompt === 0 && s9b.spent.completion === 0, JSON.stringify(s9b.spent));
+  }
+
   console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
   process.exit(fail ? 1 : 0);
 })();

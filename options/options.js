@@ -1,7 +1,7 @@
 import { DEFAULTS, getSettings, setSettings, resolveTargetName, uiLanguage,
          originPattern, hasApiPermission,
          PROFILE_KEYS, getProfiles, saveProfiles, newProfileId, pickProfile, FONT_STACKS,
-         t, applyI18n } from '../common.js';
+         t, applyI18n, fillWrapped } from '../common.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -14,7 +14,7 @@ const TEXT_FIELDS = ['baseUrl', 'apiKey', 'model', 'targetLang',
 const FONT_NOTES = {
   serif: () => t('fontSerifNote', '字形有呼吸感，久看不累。'),
   sans: () => t('fontSansNote', '笔画最实，小字号或低画质下最稳。'),
-  kai: () => t('fontKaiNote', '有手写味，笔画细，建议配大字号和深底色。')
+  kai: () => t('fontKaiNote', '有手写味，笔画细，建议配大字号和深底色。系统里没有楷体时退回宋体（Linux 可以装霞鹜文楷 LXGW WenKai）。')
 };
 const RANGE_FIELDS = {
   origScale: (v) => Number(v).toFixed(2),
@@ -42,6 +42,7 @@ let P = { active: '', list: [] };
 async function init() {
   applyI18n();                 // 页面上写死的中文先换成当前语言
   paintFoot();
+  wrapPreview();
   S = await getSettings();
   P = await getProfiles();
 
@@ -206,6 +207,13 @@ async function endRename(save) {
   sel.classList.remove('hidden');
   $('pfRename').textContent = t('optRename', '重命名');
   paintProfiles();
+}
+
+/* 预览里那句中文跟播放器里一样按词折行（见 common.js 的 fillWrapped），
+   不然在这里挑字号、宽度时看到的断行，跟真放到视频上的不是一回事。只需要做一次。 */
+function wrapPreview() {
+  const tr = $('preview').querySelector('.pv-trans');
+  if (tr) tr.classList.toggle('pv-cjk', fillWrapped(tr, tr.textContent));
 }
 
 function paintPreview() {
