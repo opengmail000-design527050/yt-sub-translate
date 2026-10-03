@@ -337,6 +337,9 @@
   "optStyleThinking": {
     "message": "enable_thinking (Qwen / DeepSeek style)"
   },
+  "optStyleClaude": {
+    "message": "thinking: between_tools (Claude Sonnet 5.5)"
+  },
   "optStyleOff": {
     "message": "Never send reasoning parameters"
   },

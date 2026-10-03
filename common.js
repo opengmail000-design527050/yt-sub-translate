@@ -19,6 +19,7 @@ export const DEFAULTS = {
   //  effort_none   -> 三档都发 reasoning_effort（GPT-5 系列默认，"关闭"才是真关闭）
   //  effort        -> low/medium 发 reasoning_effort，none 时不发该字段（最保守）
   //  enable_thinking -> 通义/DeepSeek 风格，发 enable_thinking: true/false
+  //  claude_thinking -> Claude Sonnet 5.5，关闭时发 thinking: {type: 'between_tools'}
   //  off           -> 永远不发推理参数
   reasoningStyle: 'effort_none',
 

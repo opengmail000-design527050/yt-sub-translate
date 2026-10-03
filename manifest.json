@@ -6,7 +6,7 @@
   "default_locale": "zh_CN",
   "minimum_chrome_version": "116",
   "permissions": ["storage", "unlimitedStorage"],
-  "host_permissions": ["https://www.youtube.com/*", "https://api.openai.com/*"],
+  "host_permissions": ["https://www.youtube.com/*", "https://api.openai.com/*", "https://api.anthropic.com/*"],
   "optional_host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js",

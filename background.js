@@ -206,6 +206,11 @@ function applyReasoning(body, s) {
     case 'effort_none':
       body.reasoning_effort = level;
       break;
+    case 'claude_thinking':
+      // Claude Sonnet 5.5 关推理只能发 between_tools（disabled 会 400）；
+      // 低/中档不发，走它默认的 adaptive（兼容层忽略 reasoning_effort）
+      if (level === 'none') body.thinking = { type: 'between_tools' };
+      break;
     case 'enable_thinking':
       body.enable_thinking = level !== 'none';
       if (level === 'low') body.thinking_budget = 512;
@@ -791,10 +796,11 @@ async function postJson(url, key, body, timeoutMs, retries, job) {
     try {
       const res = await fetch(url, {
         method: 'POST',
-        headers: {
+        headers: Object.assign({
           'Content-Type': 'application/json',
           Authorization: 'Bearer ' + key
-        },
+        // 扩展发的请求带 Origin，Anthropic 不带这个头就回 401
+        }, /^https:\/\/api\.anthropic\.com\//.test(url) ? { 'anthropic-dangerous-direct-browser-access': 'true' } : {}),
         body: JSON.stringify(body),
         signal: ctrl.signal
       });
@@ -1021,7 +1027,7 @@ async function testApi(override) {
 /** 这次请求里跟推理有关的字段，原样摘出来给设置页显示 */
 function reasoningFields(body) {
   const out = {};
-  for (const k of ['reasoning_effort', 'enable_thinking', 'thinking_budget']) {
+  for (const k of ['reasoning_effort', 'enable_thinking', 'thinking_budget', 'thinking']) {
     if (k in body) out[k] = body[k];
   }
   return out;
